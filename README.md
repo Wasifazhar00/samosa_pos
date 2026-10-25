@@ -18,7 +18,8 @@ receipts (share/save as image), English/Urdu, database backup.
 ## Notes
 
 - The Windows app needs the whole unzipped folder (the exe plus the DLLs next to it).
-- The APK is signed with a debug key: fine for installing directly, not for Google Play.
+- Signed APK: add 4 repository secrets (Settings -> Secrets and variables -> Actions): KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD (values are in your private signing file). Keep the .jks file safe: every future update must use the same key. Without the secrets the APK is debug-signed.
+- Updates: edit files, push to main; each build gets a higher version number so the APK installs over the old one.
 - Data is stored locally. Windows: `%APPDATA%` app-support folder; backups go to
   `Documents\SamosaPOS\Backups`. Android: use Settings -> Share database backup.
 - Android and Windows each have their own database; backups are not auto-synced.
