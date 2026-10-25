@@ -60,6 +60,15 @@ const Map<String, String> kDefaultSettings = {
   'enable_delivery': '1',
   'language': 'en',
   'paper_width': '80',
+  'paper_height': '0',
+  'print_qr': '1',
+  'qr1_label': 'JazzCash / EasyPaisa',
+  'qr2_label': '',
+  'qr2_data': '',
+  'qr1_image': '',
+  'qr2_image': '',
+  'backup_freq': 'off',
+  'backup_keep': '10',
 };
 
 const Map<String, IconData> kIconChoices = {
@@ -716,6 +725,31 @@ class DatabaseHelper {
     final db = await database;
     await db.insert('settings', {'key': 'held_orders', 'value': json},
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Flushes pending writes and returns the database file, ready to copy.
+  Future<File> databaseFileForCopy() async {
+    final db = await database;
+    try {
+      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (_) {}
+    return File(await getDatabasePath());
+  }
+
+  Future<void> restoreFrom(String sourcePath) async {
+    final path = await getDatabasePath();
+    final pending = _opening;
+    if (pending != null) {
+      final db = await pending;
+      await db.close();
+    }
+    _opening = null;
+    for (final suffix in ['-wal', '-shm', '-journal']) {
+      final f = File('$path$suffix');
+      if (await f.exists()) await f.delete();
+    }
+    await File(sourcePath).copy(path);
+    _changed();
   }
 
   /* ---------------------------- SETTINGS -------------------------------- */

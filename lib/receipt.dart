@@ -61,22 +61,56 @@ class ReceiptData {
       );
 }
 
+class _QrItem {
+  const _QrItem(this.label, this.data, this.imagePath);
+  final String label;
+  final String data;
+  final String imagePath;
+}
+
+List<_QrItem> _qrEntries(Map<String, String> s) {
+  if (s['print_qr'] == '0') return const [];
+  final out = <_QrItem>[];
+  void add(String label, String data, String img) {
+    final hasImg = img.isNotEmpty && File(img).existsSync();
+    if (hasImg || data.trim().isNotEmpty) {
+      out.add(_QrItem(label, data.trim(), hasImg ? img : ''));
+    }
+  }
+
+  add(s['qr1_label'] ?? '', s['payment_account_info'] ?? '', s['qr1_image'] ?? '');
+  add(s['qr2_label'] ?? '', s['qr2_data'] ?? '', s['qr2_image'] ?? '');
+  return out;
+}
+
 PdfPageFormat _rollFormat(ReceiptData d, Map<String, String> s) {
-  final narrow = s['paper_width'] == '58';
-  final w = (narrow ? 48.0 : 72.0) * PdfPageFormat.mm;
+  final wMm = (double.tryParse(s['paper_width'] ?? '') ?? 80)
+      .clamp(30.0, 300.0)
+      .toDouble();
+  final hSet = double.tryParse(s['paper_height'] ?? '') ?? 0;
+  final margin = (wMm <= 60 ? 5.0 : 4.0) * PdfPageFormat.mm;
   final n = d.lines.isEmpty ? 2 : d.lines.length;
-  final h = (110 +
-          n * 7 +
-          (d.discount > 0 ? 12 : 0) +
-          (d.mobile.isNotEmpty ? 6 : 0)) *
-      PdfPageFormat.mm;
-  return PdfPageFormat(w, h, marginAll: 2 * PdfPageFormat.mm);
+  final auto = 110 +
+      n * 7 +
+      (d.discount > 0 ? 12 : 0) +
+      (d.mobile.isNotEmpty ? 6 : 0) +
+      _qrEntries(s).length * 42;
+  final hMm = hSet >= 50 ? hSet : auto.toDouble();
+  return PdfPageFormat(wMm * PdfPageFormat.mm, hMm * PdfPageFormat.mm,
+      marginAll: margin);
 }
 
 /// Builds a receipt PDF with a fixed page height, so thermal printers feed
 /// exactly one receipt and stop.
 Future<Uint8List> buildReceiptPdf(ReceiptData d, Map<String, String> s) async {
   final doc = pw.Document();
+  final qrs = _qrEntries(s);
+  final qrImgs = <pw.MemoryImage?>[
+    for (final q in qrs)
+      q.imagePath.isEmpty
+          ? null
+          : pw.MemoryImage(await File(q.imagePath).readAsBytes()),
+  ];
   pw.Widget row(String a, String b, {bool bold = false}) {
     final st = pw.TextStyle(
         fontSize: 9,
@@ -124,6 +158,29 @@ Future<Uint8List> buildReceiptPdf(ReceiptData d, Map<String, String> s) async {
             textAlign: pw.TextAlign.center,
             style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
           ),
+          for (var i = 0; i < qrs.length; i++) ...[
+            pw.SizedBox(height: 6),
+            if (qrs[i].label.isNotEmpty)
+              pw.Text(qrs[i].label,
+                  textAlign: pw.TextAlign.center,
+                  style: pw.TextStyle(
+                      fontSize: 9, fontWeight: pw.FontWeight.bold)),
+            pw.Center(
+              child: qrImgs[i] != null
+                  ? pw.Image(qrImgs[i]!,
+                      width: 90, height: 90, fit: pw.BoxFit.contain)
+                  : pw.BarcodeWidget(
+                      barcode: pw.Barcode.qrCode(),
+                      data: qrs[i].data,
+                      width: 80,
+                      height: 80,
+                    ),
+            ),
+            if (qrImgs[i] == null)
+              pw.Text(qrs[i].data,
+                  textAlign: pw.TextAlign.center,
+                  style: const pw.TextStyle(fontSize: 7)),
+          ],
           pw.SizedBox(height: 6),
           pw.Center(
             child: pw.BarcodeWidget(
@@ -270,7 +327,7 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
   Widget build(BuildContext context) {
     final ur = widget.isUrdu;
     final d = widget.data;
-    final accountInfo = _s['payment_account_info'] ?? '';
+    final qrs = _qrEntries(_s);
     const black = TextStyle(color: Colors.black);
 
     return Padding(
@@ -394,19 +451,31 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
                                 ),
                               ),
                             ),
-                            if (!d.isPaid && accountInfo.isNotEmpty) ...[
+                            for (final q in qrs) ...[
                               const SizedBox(height: 8),
+                              if (q.label.isNotEmpty)
+                                Text(q.label,
+                                    style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold),
+                                    textAlign: TextAlign.center),
                               Center(
-                                child: QrImageView(
-                                  data: accountInfo,
-                                  version: QrVersions.auto,
-                                  size: 100,
-                                  backgroundColor: Colors.white,
-                                ),
+                                child: q.imagePath.isNotEmpty
+                                    ? Image.file(File(q.imagePath),
+                                        width: 110,
+                                        height: 110,
+                                        fit: BoxFit.contain)
+                                    : QrImageView(
+                                        data: q.data,
+                                        version: QrVersions.auto,
+                                        size: 90,
+                                        backgroundColor: Colors.white,
+                                      ),
                               ),
-                              Text(accountInfo,
-                                  style: const TextStyle(fontSize: 10),
-                                  textAlign: TextAlign.center),
+                              if (q.imagePath.isEmpty)
+                                Text(q.data,
+                                    style: const TextStyle(fontSize: 9),
+                                    textAlign: TextAlign.center),
                             ],
                             const SizedBox(height: 8),
                             Center(

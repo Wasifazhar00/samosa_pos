@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'backup.dart';
 import 'data.dart';
 import 'manage.dart';
 import 'pos.dart';
@@ -109,6 +111,7 @@ class _MainPosScreenState extends State<MainPosScreen> {
   final List<OrderToken> _held = [];
   final GlobalKey _bodyKey = GlobalKey();
   int _index = 0;
+  Timer? _backupTimer;
   String _shopName = kDefaultSettings['shop_name']!;
 
   bool get _ur => widget.isUrdu;
@@ -119,11 +122,15 @@ class _MainPosScreenState extends State<MainPosScreen> {
     _loadShopName();
     _restoreHeld();
     DatabaseHelper.revision.addListener(_loadShopName);
+    BackupService.runIfDue();
+    _backupTimer = Timer.periodic(
+        const Duration(hours: 1), (_) => BackupService.runIfDue());
   }
 
   @override
   void dispose() {
     DatabaseHelper.revision.removeListener(_loadShopName);
+    _backupTimer?.cancel();
     _cart.dispose();
     super.dispose();
   }

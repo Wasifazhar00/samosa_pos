@@ -1,11 +1,13 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'backup.dart';
 import 'data.dart';
 import 'receipt.dart';
 import 'reports.dart';
@@ -1196,7 +1198,21 @@ class _SettingsViewState extends State<SettingsView> {
   bool _takeaway = true;
   bool _delivery = true;
   bool _loaded = false;
-  String _paper = '80';
+  final _pw = TextEditingController();
+  final _ph = TextEditingController();
+  final _qr1l = TextEditingController();
+  final _qr2l = TextEditingController();
+  final _qr2d = TextEditingController();
+  bool _printQr = true;
+  String _img1 = '';
+  String _img2 = '';
+  String _freq = 'off';
+  static const _presets = [
+    ('80 mm roll', '80', '0'),
+    ('58 mm roll', '58', '0'),
+    ('A6', '105', '148'),
+    ('A5', '148', '210'),
+  ];
 
   bool get _ur => widget.isUrdu;
 
@@ -1212,6 +1228,11 @@ class _SettingsViewState extends State<SettingsView> {
     _address.dispose();
     _phone.dispose();
     _account.dispose();
+    _pw.dispose();
+    _ph.dispose();
+    _qr1l.dispose();
+    _qr2l.dispose();
+    _qr2d.dispose();
     super.dispose();
   }
 
@@ -1226,7 +1247,15 @@ class _SettingsViewState extends State<SettingsView> {
       _dineIn = s['enable_dine_in'] == '1';
       _takeaway = s['enable_takeaway'] == '1';
       _delivery = s['enable_delivery'] == '1';
-      _paper = s['paper_width'] == '58' ? '58' : '80';
+      _pw.text = s['paper_width'] ?? '80';
+      _ph.text = s['paper_height'] ?? '0';
+      _qr1l.text = s['qr1_label'] ?? '';
+      _qr2l.text = s['qr2_label'] ?? '';
+      _qr2d.text = s['qr2_data'] ?? '';
+      _printQr = s['print_qr'] != '0';
+      _img1 = s['qr1_image'] ?? '';
+      _img2 = s['qr2_image'] ?? '';
+      _freq = s['backup_freq'] ?? 'off';
       _loaded = true;
     });
   }
@@ -1253,37 +1282,131 @@ class _SettingsViewState extends State<SettingsView> {
       'enable_dine_in': _dineIn ? '1' : '0',
       'enable_takeaway': _takeaway ? '1' : '0',
       'enable_delivery': _delivery ? '1' : '0',
-      'paper_width': _paper,
+      'paper_width': _pw.text.trim().isEmpty ? '80' : _pw.text.trim(),
+      'paper_height': _ph.text.trim().isEmpty ? '0' : _ph.text.trim(),
+      'print_qr': _printQr ? '1' : '0',
+      'qr1_image': _img1,
+      'qr2_image': _img2,
+      'backup_freq': _freq,
+      'qr1_label': _qr1l.text.trim(),
+      'qr2_label': _qr2l.text.trim(),
+      'qr2_data': _qr2d.text.trim(),
     });
     if (!mounted) return;
     toast(context, tr(_ur, 'Settings saved', 'ترتیبات محفوظ ہو گئیں'));
   }
 
+  Future<void> _pickQr(int slot) async {
+    final res = await FilePicker.platform.pickFiles(type: FileType.image);
+    final src = res?.files.single.path;
+    if (src == null) return;
+    final base = await getApplicationSupportDirectory();
+    await base.create(recursive: true);
+    final dest = File(p.join(base.path,
+        'qr_${slot}_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}'));
+    await File(src).copy(dest.path);
+    if (!mounted) return;
+    setState(() {
+      if (slot == 1) {
+        _img1 = dest.path;
+      } else {
+        _img2 = dest.path;
+      }
+    });
+  }
+
+  Widget _qrImageRow(int slot) {
+    final path = slot == 1 ? _img1 : _img2;
+    final has = path.isNotEmpty && File(path).existsSync();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          has
+              ? Image.file(File(path), width: 56, height: 56)
+              : const Icon(Icons.qr_code_2, size: 44),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _pickQr(slot),
+                  icon: const Icon(Icons.upload, size: 18),
+                  label: Text(has
+                      ? tr(_ur, 'Change QR image', 'QR تصویر بدلیں')
+                      : tr(_ur, 'Upload QR image', 'QR تصویر اپ لوڈ کریں')),
+                ),
+                if (has)
+                  TextButton(
+                    onPressed: () => setState(() {
+                      if (slot == 1) {
+                        _img1 = '';
+                      } else {
+                        _img2 = '';
+                      }
+                    }),
+                    child: Text(tr(_ur, 'Remove', 'ہٹائیں')),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _backup() async {
     try {
-      final dbPath = await DatabaseHelper.instance.getDatabasePath();
-      final source = File(dbPath);
-      if (!await source.exists()) {
-        if (!mounted) return;
-        toast(context, 'No database file found yet.', error: true);
-        return;
-      }
-      final name = 'samosa_pos_backup_${fileStamp()}.db';
-      if (isDesktop) {
-        final docs = await getApplicationDocumentsDirectory();
-        final dir = Directory(p.join(docs.path, 'SamosaPOS', 'Backups'));
-        await dir.create(recursive: true);
-        final target = await source.copy(p.join(dir.path, name));
-        if (!mounted) return;
-        toast(context, '${tr(_ur, 'Backup saved', 'بیک اپ محفوظ ہو گیا')}: ${target.path}');
-      } else {
-        final tmp = await getTemporaryDirectory();
-        final copy = await source.copy(p.join(tmp.path, name));
-        await Share.shareXFiles([XFile(copy.path)],
-            text: 'Samosa POS database backup');
-      }
+      final f = await BackupService.backupNow();
+      if (!mounted) return;
+      toast(context, '${tr(_ur, 'Backup saved', 'بیک اپ محفوظ ہو گیا')}: ${f.path}');
     } catch (e) {
       if (mounted) toast(context, 'Backup failed: $e', error: true);
+    }
+  }
+
+  Future<void> _shareBackup() async {
+    try {
+      final src = await DatabaseHelper.instance.databaseFileForCopy();
+      final tmp = await getTemporaryDirectory();
+      final copy = await src
+          .copy(p.join(tmp.path, 'samosa_pos_backup_${fileStamp()}.db'));
+      await Share.shareXFiles([XFile(copy.path)],
+          text: 'Samosa POS database backup');
+    } catch (e) {
+      if (mounted) toast(context, 'Share failed: $e', error: true);
+    }
+  }
+
+  Future<void> _restore() async {
+    final res = await FilePicker.platform.pickFiles();
+    final path = res?.files.single.path;
+    if (path == null || !mounted) return;
+    final head = await File(path).openRead(0, 15).expand((b) => b).toList();
+    if (String.fromCharCodes(head) != 'SQLite format 3') {
+      if (mounted) toast(context, 'That file is not a Samosa POS backup.', error: true);
+      return;
+    }
+    if (!mounted) return;
+    final ok = await confirmDialog(
+      context,
+      title: tr(_ur, 'Restore backup?', 'بیک اپ بحال کریں؟'),
+      message: tr(
+          _ur,
+          'All current data will be replaced by the selected backup.',
+          'موجودہ تمام ڈیٹا منتخب بیک اپ سے بدل دیا جائے گا۔'),
+      yes: tr(_ur, 'Restore', 'بحال کریں'),
+      no: tr(_ur, 'Cancel', 'منسوخ'),
+      danger: true,
+    );
+    if (!ok) return;
+    try {
+      await DatabaseHelper.instance.restoreFrom(path);
+      await _load();
+      if (mounted) toast(context, tr(_ur, 'Backup restored', 'بیک اپ بحال ہو گیا'));
+    } catch (e) {
+      if (mounted) toast(context, 'Restore failed: $e', error: true);
     }
   }
 
@@ -1349,19 +1472,88 @@ class _SettingsViewState extends State<SettingsView> {
               onChanged: (v) => setState(() => _delivery = v),
             ),
             const SizedBox(height: 16),
-            Text(tr(_ur, 'Thermal paper width', 'تھرمل پیپر کی چوڑائی'),
+            Text(tr(_ur, 'Receipt size and QR codes', 'رسید کا سائز اور QR کوڈ'),
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
-            SegmentedButton<String>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: '80', label: Text('80 mm')),
-                ButtonSegment(value: '58', label: Text('58 mm')),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final t in _presets)
+                  ActionChip(
+                    label: Text(t.$1),
+                    onPressed: () => setState(() {
+                      _pw.text = t.$2;
+                      _ph.text = t.$3;
+                    }),
+                  ),
               ],
-              selected: {_paper},
-              onSelectionChanged: (v) => setState(() => _paper = v.first),
             ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _pw,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))
+                    ],
+                    decoration: InputDecoration(
+                        labelText: tr(_ur, 'Width (mm)', 'چوڑائی (mm)'),
+                        border: const OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _ph,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))
+                    ],
+                    decoration: InputDecoration(
+                        labelText:
+                            tr(_ur, 'Height (mm, 0 = auto)', 'اونچائی (mm، 0 = آٹو)'),
+                        border: const OutlineInputBorder()),
+                  ),
+                ),
+              ],
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(tr(_ur, 'Print payment QR codes on receipt',
+                  'رسید پر ادائیگی کے QR کوڈ چھاپیں')),
+              value: _printQr,
+              onChanged: (v) => setState(() => _printQr = v),
+            ),
+            TextField(
+              controller: _qr1l,
+              decoration: InputDecoration(
+                  labelText: tr(_ur, 'QR 1 name (account is the field above)',
+                      'QR 1 کا نام (اکاؤنٹ اوپر والے خانے میں)'),
+                  border: const OutlineInputBorder()),
+            ),
+            _qrImageRow(1),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _qr2l,
+              decoration: InputDecoration(
+                  labelText: tr(_ur, 'QR 2 name (e.g. EasyPaisa)',
+                      'QR 2 کا نام (مثلاً ایزی پیسہ)'),
+                  border: const OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _qr2d,
+              decoration: InputDecoration(
+                  labelText: tr(_ur, 'QR 2 account / payment text',
+                      'QR 2 اکاؤنٹ / ادائیگی کی تفصیل'),
+                  border: const OutlineInputBorder()),
+            ),
+            _qrImageRow(2),
             const SizedBox(height: 16),
             FilledButton.icon(
               style: FilledButton.styleFrom(
@@ -1372,13 +1564,60 @@ class _SettingsViewState extends State<SettingsView> {
               label: Text(tr(_ur, 'Save settings', 'ترتیبات محفوظ کریں')),
             ),
             const SizedBox(height: 10),
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 50)),
-              onPressed: _backup,
-              icon: const Icon(Icons.backup),
-              label: Text(isDesktop
-                  ? tr(_ur, 'Save database backup', 'ڈیٹابیس بیک اپ محفوظ کریں')
-                  : tr(_ur, 'Share database backup', 'ڈیٹابیس بیک اپ شیئر کریں')),
+            const Divider(height: 32),
+            Text(tr(_ur, 'Backup', 'بیک اپ'),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Row(
+              children: [
+                Expanded(
+                    child: Text(tr(_ur, 'Automatic backup', 'خودکار بیک اپ'))),
+                DropdownButton<String>(
+                  value: _freq,
+                  items: [
+                    DropdownMenuItem(
+                        value: 'off', child: Text(tr(_ur, 'Off', 'بند'))),
+                    DropdownMenuItem(
+                        value: 'daily',
+                        child: Text(tr(_ur, 'Daily', 'روزانہ'))),
+                    DropdownMenuItem(
+                        value: 'weekly',
+                        child: Text(tr(_ur, 'Weekly', 'ہفتہ وار'))),
+                    DropdownMenuItem(
+                        value: 'monthly',
+                        child: Text(tr(_ur, 'Monthly', 'ماہانہ'))),
+                  ],
+                  onChanged: (v) => setState(() => _freq = v ?? 'off'),
+                ),
+              ],
+            ),
+            Text(
+              tr(_ur, 'Press "Save settings" to apply. The app must be opened for a scheduled backup to run; the last 10 automatic backups are kept.',
+                  'لاگو کرنے کے لیے "ترتیبات محفوظ کریں" دبائیں۔ شیڈول بیک اپ کے لیے ایپ کھلنی چاہیے؛ آخری 10 خودکار بیک اپ رکھے جاتے ہیں۔'),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _backup,
+                  icon: const Icon(Icons.backup),
+                  label: Text(tr(_ur, 'Backup now', 'ابھی بیک اپ لیں')),
+                ),
+                if (!isDesktop)
+                  OutlinedButton.icon(
+                    onPressed: _shareBackup,
+                    icon: const Icon(Icons.share),
+                    label: Text(tr(_ur, 'Share backup', 'بیک اپ شیئر کریں')),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _restore,
+                  icon: const Icon(Icons.restore),
+                  label: Text(tr(_ur, 'Restore from file', 'فائل سے بحال کریں')),
+                ),
+              ],
             ),
           ],
         ),
