@@ -14,6 +14,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'data.dart';
+import 'thermal.dart';
 import 'ui_helpers.dart';
 
 class ReceiptData {
@@ -61,20 +62,20 @@ class ReceiptData {
       );
 }
 
-class _QrItem {
-  const _QrItem(this.label, this.data, this.imagePath);
+class QrItem {
+  const QrItem(this.label, this.data, this.imagePath);
   final String label;
   final String data;
   final String imagePath;
 }
 
-List<_QrItem> _qrEntries(Map<String, String> s) {
+List<QrItem> qrEntries(Map<String, String> s) {
   if (s['print_qr'] == '0') return const [];
-  final out = <_QrItem>[];
+  final out = <QrItem>[];
   void add(String label, String data, String img) {
     final hasImg = img.isNotEmpty && File(img).existsSync();
     if (hasImg || data.trim().isNotEmpty) {
-      out.add(_QrItem(label, data.trim(), hasImg ? img : ''));
+      out.add(QrItem(label, data.trim(), hasImg ? img : ''));
     }
   }
 
@@ -94,7 +95,7 @@ PdfPageFormat _rollFormat(ReceiptData d, Map<String, String> s) {
       n * 7 +
       (d.discount > 0 ? 12 : 0) +
       (d.mobile.isNotEmpty ? 6 : 0) +
-      _qrEntries(s).length * 42;
+      qrEntries(s).length * 42;
   final hMm = hSet >= 50 ? hSet : auto.toDouble();
   return PdfPageFormat(wMm * PdfPageFormat.mm, hMm * PdfPageFormat.mm,
       marginAll: margin);
@@ -104,7 +105,7 @@ PdfPageFormat _rollFormat(ReceiptData d, Map<String, String> s) {
 /// exactly one receipt and stop.
 Future<Uint8List> buildReceiptPdf(ReceiptData d, Map<String, String> s) async {
   final doc = pw.Document();
-  final qrs = _qrEntries(s);
+  final qrs = qrEntries(s);
   final qrImgs = <pw.MemoryImage?>[
     for (final q in qrs)
       q.imagePath.isEmpty
@@ -205,6 +206,10 @@ Future<Uint8List> buildReceiptPdf(ReceiptData d, Map<String, String> s) async {
 /// Sends the receipt to the system print dialog (thermal printer friendly).
 Future<void> printReceipt(ReceiptData d) async {
   final s = await DatabaseHelper.instance.getSettings();
+  if ((s['printer_mode'] ?? 'system') != 'system') {
+    await ThermalPrinter.printReceipt(d, s);
+    return;
+  }
   final bytes = await buildReceiptPdf(d, s);
   await Printing.layoutPdf(
     name: d.billNo,
@@ -327,7 +332,7 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
   Widget build(BuildContext context) {
     final ur = widget.isUrdu;
     final d = widget.data;
-    final qrs = _qrEntries(_s);
+    final qrs = qrEntries(_s);
     const black = TextStyle(color: Colors.black);
 
     return Padding(

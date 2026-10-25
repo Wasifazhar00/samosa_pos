@@ -4,12 +4,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
+import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'backup.dart';
 import 'data.dart';
 import 'receipt.dart';
+import 'thermal.dart';
 import 'reports.dart';
 import 'ui_helpers.dart';
 
@@ -1207,6 +1209,11 @@ class _SettingsViewState extends State<SettingsView> {
   String _img1 = '';
   String _img2 = '';
   String _freq = 'off';
+  String _pmode = 'system';
+  String _pmac = '';
+  String _pname = '';
+  final _pip = TextEditingController();
+  final _pcols = TextEditingController();
   static const _presets = [
     ('80 mm roll', '80', '0'),
     ('58 mm roll', '58', '0'),
@@ -1233,6 +1240,8 @@ class _SettingsViewState extends State<SettingsView> {
     _qr1l.dispose();
     _qr2l.dispose();
     _qr2d.dispose();
+    _pip.dispose();
+    _pcols.dispose();
     super.dispose();
   }
 
@@ -1256,6 +1265,11 @@ class _SettingsViewState extends State<SettingsView> {
       _img1 = s['qr1_image'] ?? '';
       _img2 = s['qr2_image'] ?? '';
       _freq = s['backup_freq'] ?? 'off';
+      _pmode = s['printer_mode'] ?? 'system';
+      _pmac = s['printer_bt_mac'] ?? '';
+      _pname = s['printer_bt_name'] ?? '';
+      _pip.text = s['printer_ip'] ?? '';
+      _pcols.text = s['thermal_cols'] ?? '';
       _loaded = true;
     });
   }
@@ -1288,6 +1302,7 @@ class _SettingsViewState extends State<SettingsView> {
       'qr1_image': _img1,
       'qr2_image': _img2,
       'backup_freq': _freq,
+      ..._printerMap(),
       'qr1_label': _qr1l.text.trim(),
       'qr2_label': _qr2l.text.trim(),
       'qr2_data': _qr2d.text.trim(),
@@ -1354,6 +1369,59 @@ class _SettingsViewState extends State<SettingsView> {
         ],
       ),
     );
+  }
+
+  Map<String, String> _printerMap() => {
+        'printer_mode': _pmode,
+        'printer_bt_mac': _pmac,
+        'printer_bt_name': _pname,
+        'printer_ip': _pip.text.trim(),
+        'thermal_cols': _pcols.text.trim(),
+      };
+
+  Future<void> _choosePrinter() async {
+    try {
+      await ThermalPrinter.ensureBluetoothPermission();
+      final list = await PrintBluetoothThermal.pairedBluetooths;
+      if (!mounted) return;
+      if (list.isEmpty) {
+        toast(context,
+            'No paired printers. Pair it first in Android Bluetooth settings (PIN 0000 or 1234).',
+            error: true);
+        return;
+      }
+      final pick = await showDialog<BluetoothInfo>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: Text(tr(_ur, 'Choose printer', 'پرنٹر منتخب کریں')),
+          children: [
+            for (final d in list)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, d),
+                child: Text('${d.name}\n${d.macAdress}'),
+              ),
+          ],
+        ),
+      );
+      if (pick == null) return;
+      setState(() {
+        _pname = pick.name;
+        _pmac = pick.macAdress;
+      });
+    } catch (e) {
+      if (mounted) toast(context, '$e', error: true);
+    }
+  }
+
+  Future<void> _testPrint() async {
+    try {
+      final s = await DatabaseHelper.instance.getSettings();
+      s.addAll(_printerMap());
+      s['paper_width'] = _pw.text.trim().isEmpty ? '80' : _pw.text.trim();
+      await ThermalPrinter.test(s);
+    } catch (e) {
+      if (mounted) toast(context, 'Test print failed: $e', error: true);
+    }
   }
 
   Future<void> _backup() async {
@@ -1564,6 +1632,69 @@ class _SettingsViewState extends State<SettingsView> {
               label: Text(tr(_ur, 'Save settings', 'ترتیبات محفوظ کریں')),
             ),
             const SizedBox(height: 10),
+            const Divider(height: 32),
+            Text(tr(_ur, 'Printer', 'پرنٹر'),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            DropdownButton<String>(
+              value: (_pmode == 'bluetooth' && !Platform.isAndroid) ? 'system' : _pmode,
+              isExpanded: true,
+              items: [
+                DropdownMenuItem(
+                    value: 'system',
+                    child: Text(tr(_ur, 'System print dialog', 'سسٹم پرنٹ ڈائیلاگ'))),
+                if (Platform.isAndroid)
+                  DropdownMenuItem(
+                      value: 'bluetooth',
+                      child: Text(tr(_ur, 'Bluetooth thermal printer (recommended)',
+                          'بلوٹوتھ تھرمل پرنٹر (تجویز کردہ)'))),
+                DropdownMenuItem(
+                    value: 'network',
+                    child: Text(tr(_ur, 'Wi-Fi / LAN thermal printer',
+                        'وائی فائی / LAN تھرمل پرنٹر'))),
+              ],
+              onChanged: (v) => setState(() => _pmode = v ?? 'system'),
+            ),
+            if (_pmode == 'bluetooth')
+              Row(
+                children: [
+                  Expanded(
+                      child: Text(_pname.isEmpty
+                          ? tr(_ur, 'No printer chosen', 'کوئی پرنٹر منتخب نہیں')
+                          : '$_pname ($_pmac)')),
+                  OutlinedButton(
+                    onPressed: _choosePrinter,
+                    child: Text(tr(_ur, 'Choose', 'منتخب کریں')),
+                  ),
+                ],
+              ),
+            if (_pmode == 'network')
+              TextField(
+                controller: _pip,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                    labelText: tr(_ur, 'Printer IP address (port 9100)',
+                        'پرنٹر کا IP ایڈریس (پورٹ 9100)'),
+                    border: const OutlineInputBorder()),
+              ),
+            if (_pmode != 'system') ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _pcols,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                    labelText: tr(_ur,
+                        'Characters per line (blank = auto: 48 for 80 mm, 32 for 58 mm)',
+                        'ہر لائن میں حروف (خالی = آٹو)'),
+                    border: const OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _testPrint,
+                icon: const Icon(Icons.print),
+                label: Text(tr(_ur, 'Test print', 'ٹیسٹ پرنٹ')),
+              ),
+            ],
             const Divider(height: 32),
             Text(tr(_ur, 'Backup', 'بیک اپ'),
                 style:

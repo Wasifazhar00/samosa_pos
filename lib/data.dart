@@ -68,6 +68,11 @@ const Map<String, String> kDefaultSettings = {
   'qr1_image': '',
   'qr2_image': '',
   'backup_freq': 'off',
+  'printer_mode': 'system',
+  'printer_bt_mac': '',
+  'printer_bt_name': '',
+  'printer_ip': '',
+  'thermal_cols': '',
   'backup_keep': '10',
 };
 
