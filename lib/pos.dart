@@ -120,6 +120,25 @@ class CartController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setQty(CartItem c, int q) {
+    if (q <= 0) {
+      items.remove(c);
+    } else {
+      c.quantity = q;
+    }
+    notifyListeners();
+  }
+
+  void addMany(MenuItem m, int q) {
+    final i = items.indexWhere((c) => c.item.id == m.id);
+    if (i >= 0) {
+      items[i].quantity += q;
+    } else {
+      items.add(CartItem(item: m, quantity: q));
+    }
+    notifyListeners();
+  }
+
   void increment(CartItem c) {
     c.quantity++;
     notifyListeners();
@@ -264,6 +283,18 @@ class _PosTerminalViewState extends State<PosTerminalView> {
     if (!types.contains(widget.cart.orderType)) {
       widget.cart.setOrderType(types.first);
     }
+  }
+
+  Future<void> _askQty(MenuItem item) async {
+    final v = await promptNumber(
+      context,
+      title: _ur ? item.nameUr : item.nameEn,
+      label: tr(_ur, 'Quantity to add', 'شامل کرنے کی مقدار'),
+      allowZero: false,
+      ok: tr(_ur, 'Add', 'شامل کریں'),
+      cancel: tr(_ur, 'Cancel', 'منسوخ'),
+    );
+    if (v != null && v >= 1) widget.cart.addMany(item, v.floor());
   }
 
   void _closeSheet() {
@@ -445,6 +476,7 @@ class _PosTerminalViewState extends State<PosTerminalView> {
                     : Colors.grey.shade300,
                 child: InkWell(
                   onTap: item.inStock ? () => widget.cart.add(item) : null,
+                  onLongPress: item.inStock ? () => _askQty(item) : null,
                   child: Stack(
                     children: [
                       Center(
@@ -481,6 +513,17 @@ class _PosTerminalViewState extends State<PosTerminalView> {
                           ),
                         ),
                       ),
+                      if (item.inStock)
+                        PositionedDirectional(
+                          top: 0,
+                          start: 0,
+                          child: IconButton(
+                            tooltip: tr(_ur, 'Enter quantity', 'مقدار درج کریں'),
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.dialpad, size: 18),
+                            onPressed: () => _askQty(item),
+                          ),
+                        ),
                       if (inCart > 0)
                         PositionedDirectional(
                           top: 6,
@@ -946,11 +989,30 @@ class _CartLine extends StatelessWidget {
             icon: const Icon(Icons.remove_circle_outline),
             onPressed: () => cart.decrement(line),
           ),
-          SizedBox(
-            width: 26,
-            child: Text('${line.quantity}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+          InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: () async {
+              final v = await promptNumber(
+                context,
+                title: name,
+                label: tr(isUrdu, 'Quantity (0 removes)', 'مقدار (0 سے ہٹ جائے گا)'),
+                initial: line.quantity.toDouble(),
+                ok: tr(isUrdu, 'OK', 'ٹھیک ہے'),
+                cancel: tr(isUrdu, 'Cancel', 'منسوخ'),
+              );
+              if (v != null) cart.setQty(line, v.floor());
+            },
+            child: Container(
+              width: 46,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade400),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text('${line.quantity}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
