@@ -1,0 +1,25 @@
+name: samosa_pos
+description: Offline point-of-sale app for Bismillah Shereen Mehal Samosa shop (Android + Windows).
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path: ^1.9.0
+  path_provider: ^2.1.5
+  sqflite: ^2.4.1
+  sqflite_common_ffi: ^2.3.4
+  sqlite3_flutter_libs: ^0.5.28
+  qr_flutter: ^4.1.0
+  barcode_widget: ^2.0.4
+  share_plus: ^10.1.4
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
