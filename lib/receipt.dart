@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -57,6 +60,102 @@ class ReceiptData {
       );
 }
 
+PdfPageFormat _rollFormat(ReceiptData d, Map<String, String> s) {
+  final narrow = s['paper_width'] == '58';
+  final w = (narrow ? 48.0 : 72.0) * PdfPageFormat.mm;
+  final n = d.lines.isEmpty ? 2 : d.lines.length;
+  final h = (110 +
+          n * 7 +
+          (d.discount > 0 ? 12 : 0) +
+          (d.mobile.isNotEmpty ? 6 : 0)) *
+      PdfPageFormat.mm;
+  return PdfPageFormat(w, h, marginAll: 2 * PdfPageFormat.mm);
+}
+
+/// Builds a receipt PDF with a fixed page height, so thermal printers feed
+/// exactly one receipt and stop.
+Future<Uint8List> buildReceiptPdf(ReceiptData d, Map<String, String> s) async {
+  final doc = pw.Document();
+  pw.Widget row(String a, String b, {bool bold = false}) {
+    final st = pw.TextStyle(
+        fontSize: 9,
+        fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal);
+    return pw.Row(
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      children: [pw.Expanded(child: pw.Text(a, style: st)), pw.Text(b, style: st)],
+    );
+  }
+
+  doc.addPage(
+    pw.Page(
+      pageFormat: _rollFormat(d, s),
+      build: (_) => pw.Column(
+        mainAxisSize: pw.MainAxisSize.min,
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [
+          pw.Text(s['shop_name'] ?? '',
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+          pw.Text(s['shop_address'] ?? '',
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(fontSize: 8)),
+          pw.Text('Ph: ${s['shop_phone'] ?? ''}',
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(fontSize: 8)),
+          pw.Divider(),
+          row('Token ${d.tokenNo}', d.billNo, bold: true),
+          row(fmtDateTime(d.createdAt), d.orderType),
+          if (d.mobile.isNotEmpty) row('Customer', d.mobile),
+          pw.Divider(),
+          if (d.lines.isNotEmpty)
+            ...d.lines.map((l) => row('${l.name} x${l.qty}', money(l.total)))
+          else
+            pw.Text(d.summary, style: const pw.TextStyle(fontSize: 9)),
+          pw.Divider(),
+          if (d.discount > 0) ...[
+            row('Subtotal', money(d.subtotal)),
+            row('Discount', '- ${money(d.discount)}'),
+          ],
+          row('TOTAL', money(d.total), bold: true),
+          pw.SizedBox(height: 4),
+          pw.Text(
+            d.isPaid ? 'PAID (${d.paymentMethod})' : 'UNPAID / UDHAR',
+            textAlign: pw.TextAlign.center,
+            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Center(
+            child: pw.BarcodeWidget(
+              barcode: pw.Barcode.code128(),
+              data: d.billNo,
+              width: 130,
+              height: 30,
+              drawText: true,
+            ),
+          ),
+          pw.SizedBox(height: 4),
+          pw.Text('Thank you! Visit again.',
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(fontSize: 9)),
+        ],
+      ),
+    ),
+  );
+  return doc.save();
+}
+
+/// Sends the receipt to the system print dialog (thermal printer friendly).
+Future<void> printReceipt(ReceiptData d) async {
+  final s = await DatabaseHelper.instance.getSettings();
+  final bytes = await buildReceiptPdf(d, s);
+  await Printing.layoutPdf(
+    name: d.billNo,
+    format: _rollFormat(d, s),
+    dynamicLayout: false,
+    onLayout: (_) async => bytes,
+  );
+}
+
 Future<void> showReceiptSheet(
   BuildContext context, {
   required ReceiptData data,
@@ -99,6 +198,34 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
     final s = await DatabaseHelper.instance.getSettings();
     if (!mounted) return;
     setState(() => _s = s);
+  }
+
+  Future<void> _printNow() async {
+    try {
+      await printReceipt(widget.data);
+    } catch (e) {
+      if (mounted) toast(context, 'Could not print: $e', error: true);
+    }
+  }
+
+  Future<void> _savePdf() async {
+    try {
+      final bytes = await buildReceiptPdf(widget.data, _s);
+      final name = 'receipt_${widget.data.billNo}.pdf';
+      if (isDesktop) {
+        final docs = await getApplicationDocumentsDirectory();
+        final dir = Directory(p.join(docs.path, 'SamosaPOS', 'Receipts'));
+        await dir.create(recursive: true);
+        final file = File(p.join(dir.path, name));
+        await file.writeAsBytes(bytes);
+        if (!mounted) return;
+        toast(context, 'PDF saved: ${file.path}');
+      } else {
+        await Printing.sharePdf(bytes: bytes, filename: name);
+      }
+    } catch (e) {
+      if (mounted) toast(context, 'Could not save PDF: $e', error: true);
+    }
   }
 
   Future<void> _shareImage() async {
@@ -309,35 +436,36 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
             children: [
-              Expanded(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.teal,
-                    minimumSize: const Size(0, 46),
-                  ),
-                  onPressed: _busy ? null : _shareImage,
-                  icon: Icon(isDesktop ? Icons.save_alt : Icons.share,
-                      size: 18),
-                  label: Text(
-                    isDesktop
-                        ? tr(ur, 'Save image', 'تصویر محفوظ کریں')
-                        : tr(ur, 'Share image', 'تصویر شیئر کریں'),
-                  ),
-                ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue.shade700),
+                onPressed: _printNow,
+                icon: const Icon(Icons.print, size: 18),
+                label: Text(tr(ur, 'Print', 'پرنٹ')),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.green.shade700,
-                    minimumSize: const Size(0, 46),
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.check, size: 18),
-                  label: Text(tr(ur, 'Done', 'مکمل')),
-                ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.indigo),
+                onPressed: _savePdf,
+                icon: const Icon(Icons.picture_as_pdf, size: 18),
+                label: Text(tr(ur, 'Save PDF', 'پی ڈی ایف')),
+              ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.teal),
+                onPressed: _busy ? null : _shareImage,
+                icon: Icon(isDesktop ? Icons.save_alt : Icons.share, size: 18),
+                label: Text(tr(ur, 'Image', 'تصویر')),
+              ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                    backgroundColor: Colors.green.shade700),
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.check, size: 18),
+                label: Text(tr(ur, 'Done', 'مکمل')),
               ),
             ],
           ),

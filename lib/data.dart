@@ -60,6 +60,7 @@ const Map<String, String> kDefaultSettings = {
   'enable_takeaway': '1',
   'enable_delivery': '1',
   'language': 'en',
+  'paper_width': '80',
 };
 
 const Map<String, IconData> kIconChoices = {
@@ -703,6 +704,19 @@ class DatabaseHelper {
 
     _changed();
     return sale;
+  }
+
+  Future<String?> getHeldJson() async {
+    final db = await database;
+    final rows = await db
+        .query('settings', where: 'key = ?', whereArgs: ['held_orders']);
+    return rows.isEmpty ? null : rows.first['value'] as String?;
+  }
+
+  Future<void> saveHeldJson(String json) async {
+    final db = await database;
+    await db.insert('settings', {'key': 'held_orders', 'value': json},
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /* ---------------------------- SETTINGS -------------------------------- */

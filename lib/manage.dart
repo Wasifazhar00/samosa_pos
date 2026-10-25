@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'data.dart';
 import 'receipt.dart';
+import 'reports.dart';
 import 'ui_helpers.dart';
 
 /* ============================================================================
@@ -973,6 +974,14 @@ class _ReportsAndSalesHistoryViewState
                         onChanged: (v) =>
                             setState(() => _payFilter = v ?? 'All'),
                       ),
+                      IconButton(
+                        tooltip: tr(_ur, 'Sales reports', 'سیلز رپورٹس'),
+                        icon: const Icon(Icons.bar_chart),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                              builder: (_) => SalesReportPage(isUrdu: _ur)),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1187,6 +1196,7 @@ class _SettingsViewState extends State<SettingsView> {
   bool _takeaway = true;
   bool _delivery = true;
   bool _loaded = false;
+  String _paper = '80';
 
   bool get _ur => widget.isUrdu;
 
@@ -1216,6 +1226,7 @@ class _SettingsViewState extends State<SettingsView> {
       _dineIn = s['enable_dine_in'] == '1';
       _takeaway = s['enable_takeaway'] == '1';
       _delivery = s['enable_delivery'] == '1';
+      _paper = s['paper_width'] == '58' ? '58' : '80';
       _loaded = true;
     });
   }
@@ -1242,6 +1253,7 @@ class _SettingsViewState extends State<SettingsView> {
       'enable_dine_in': _dineIn ? '1' : '0',
       'enable_takeaway': _takeaway ? '1' : '0',
       'enable_delivery': _delivery ? '1' : '0',
+      'paper_width': _paper,
     });
     if (!mounted) return;
     toast(context, tr(_ur, 'Settings saved', 'ترتیبات محفوظ ہو گئیں'));
@@ -1335,6 +1347,20 @@ class _SettingsViewState extends State<SettingsView> {
               title: Text(tr(_ur, 'Delivery', 'ڈیلیوری')),
               value: _delivery,
               onChanged: (v) => setState(() => _delivery = v),
+            ),
+            const SizedBox(height: 16),
+            Text(tr(_ur, 'Thermal paper width', 'تھرمل پیپر کی چوڑائی'),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: '80', label: Text('80 mm')),
+                ButtonSegment(value: '58', label: Text('58 mm')),
+              ],
+              selected: {_paper},
+              onSelectionChanged: (v) => setState(() => _paper = v.first),
             ),
             const SizedBox(height: 16),
             FilledButton.icon(

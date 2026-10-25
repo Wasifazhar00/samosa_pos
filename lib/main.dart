@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -116,6 +118,7 @@ class _MainPosScreenState extends State<MainPosScreen> {
   void initState() {
     super.initState();
     _loadShopName();
+    _restoreHeld();
     DatabaseHelper.revision.addListener(_loadShopName);
   }
 
@@ -138,6 +141,28 @@ class _MainPosScreenState extends State<MainPosScreen> {
     }
   }
 
+  Future<void> _restoreHeld() async {
+    try {
+      final raw = await DatabaseHelper.instance.getHeldJson();
+      if (raw == null || raw.isEmpty || !mounted) return;
+      final list = (jsonDecode(raw) as List<dynamic>)
+          .map((e) => OrderToken.fromJson(e as Map<String, dynamic>))
+          .toList();
+      setState(() {
+        _held
+          ..clear()
+          ..addAll(list);
+      });
+    } catch (_) {
+      // Ignore unreadable saved orders.
+    }
+  }
+
+  void _persistHeld() {
+    DatabaseHelper.instance
+        .saveHeldJson(jsonEncode(_held.map((t) => t.toJson()).toList()));
+  }
+
   String _nextLabel(String tableName) {
     final used =
         _held.where((t) => t.tableName == tableName).map((t) => t.label).toSet();
@@ -155,6 +180,7 @@ class _MainPosScreenState extends State<MainPosScreen> {
     setState(() {
       _held.add(token);
     });
+    _persistHeld();
     _cart.clear();
     toast(
         context,
@@ -197,6 +223,7 @@ class _MainPosScreenState extends State<MainPosScreen> {
       _held.remove(order);
       _index = 0;
     });
+    _persistHeld();
     _cart.loadToken(order);
   }
 
@@ -214,6 +241,7 @@ class _MainPosScreenState extends State<MainPosScreen> {
     setState(() {
       _held.remove(order);
     });
+    _persistHeld();
   }
 
   Widget _tablesIcon() => Badge(

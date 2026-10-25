@@ -47,6 +47,40 @@ class OrderToken {
 
   double get total => items.fold(0.0, (sum, c) => sum + c.total);
   int get units => items.fold(0, (sum, c) => sum + c.quantity);
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'label': label,
+        'table': tableName,
+        'type': orderType,
+        'disc': discountText,
+        'mobile': mobile,
+        'address': address,
+        'time': timeSeated.toIso8601String(),
+        'items': items
+            .map((c) => {'m': c.item.toMap(), 'q': c.quantity, 'p': c.customPrice})
+            .toList(),
+      };
+
+  factory OrderToken.fromJson(Map<String, dynamic> j) => OrderToken(
+        id: j['id'] as String,
+        label: j['label'] as String,
+        tableName: j['table'] as String,
+        orderType: j['type'] as String,
+        discountText: (j['disc'] as String?) ?? '',
+        mobile: (j['mobile'] as String?) ?? '',
+        address: (j['address'] as String?) ?? '',
+        timeSeated: DateTime.tryParse((j['time'] as String?) ?? '') ??
+            DateTime.now(),
+        items: (j['items'] as List<dynamic>).map((e) {
+          final m = e as Map<String, dynamic>;
+          return CartItem(
+            item: MenuItem.fromMap(Map<String, dynamic>.from(m['m'] as Map)),
+            quantity: (m['q'] as num).toInt(),
+            customPrice: (m['p'] as num).toDouble(),
+          );
+        }).toList(),
+      );
 }
 
 class CartController extends ChangeNotifier {
@@ -179,10 +213,10 @@ class PosTerminalView extends StatefulWidget {
 }
 
 class _PayChoice {
-  const _PayChoice(this.method, this.isPaid, this.showReceipt);
+  const _PayChoice(this.method, this.isPaid, this.after);
   final String method;
   final bool isPaid;
-  final bool showReceipt;
+  final String after;
 }
 
 class _PosTerminalViewState extends State<PosTerminalView> {
@@ -342,15 +376,17 @@ class _PosTerminalViewState extends State<PosTerminalView> {
       if (!mounted) return;
       cart.clear();
       _closeSheet();
-      if (choice.showReceipt) {
-        showReceiptSheet(
-          context,
-          data: ReceiptData.fromSale(sale),
-          isUrdu: _ur,
-        );
+      final data = ReceiptData.fromSale(sale);
+      if (choice.after == 'show') {
+        showReceiptSheet(context, data: data, isUrdu: _ur);
       } else {
         toast(context,
             '${tr(_ur, 'Saved', 'محفوظ ہو گیا')}: ${sale.billNo} ${sale.tokenNo}');
+        if (choice.after == 'print') {
+          printReceipt(data).catchError((Object e) {
+            if (mounted) toast(context, 'Could not print: $e', error: true);
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -561,7 +597,7 @@ class _PaymentDialog extends StatefulWidget {
 }
 
 class _PaymentDialogState extends State<_PaymentDialog> {
-  bool _receipt = true;
+  String _after = 'show';
 
   Widget _option(IconData icon, Color color, String title, String subtitle,
       String method, bool paid) {
@@ -569,7 +605,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
       leading: Icon(icon, size: 32, color: color),
       title: Text(title),
       subtitle: Text(subtitle),
-      onTap: () => Navigator.pop(context, _PayChoice(method, paid, _receipt)),
+      onTap: () => Navigator.pop(context, _PayChoice(method, paid, _after)),
     );
   }
 
@@ -599,13 +635,16 @@ class _PaymentDialogState extends State<_PaymentDialog> {
               tr(ur, 'Record as balance to collect', 'وصولی کے لیے لکھیں'),
               'Unpaid',
               false),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            value: _receipt,
-            onChanged: (v) => setState(() => _receipt = v ?? true),
-            title: Text(tr(ur, 'Show receipt after saving',
-                'محفوظ کرنے کے بعد رسید دکھائیں')),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            showSelectedIcon: false,
+            segments: [
+              ButtonSegment(value: 'none', label: Text(tr(ur, 'Save only', 'صرف محفوظ'))),
+              ButtonSegment(value: 'show', label: Text(tr(ur, 'Receipt', 'رسید'))),
+              ButtonSegment(value: 'print', label: Text(tr(ur, 'Print', 'پرنٹ'))),
+            ],
+            selected: {_after},
+            onSelectionChanged: (v) => setState(() => _after = v.first),
           ),
         ],
       ),
