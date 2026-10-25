@@ -2,21 +2,77 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
 import 'data.dart';
 import 'receipt.dart';
 
+const String _rawPrintScript = r"""
+param([string]$Printer, [string]$DataFile)
+$code = @"
+using System;
+using System.Runtime.InteropServices;
+public class RawPrint {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+  public class DOCINFOA {
+    [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+  }
+  [DllImport("winspool.Drv", EntryPoint = "OpenPrinterA", SetLastError = true, CharSet = CharSet.Ansi, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
+  [DllImport("winspool.Drv", EntryPoint = "ClosePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool ClosePrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint = "StartDocPrinterA", SetLastError = true, CharSet = CharSet.Ansi, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool StartDocPrinter(IntPtr hPrinter, Int32 level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+  [DllImport("winspool.Drv", EntryPoint = "EndDocPrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool EndDocPrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint = "StartPagePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool StartPagePrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint = "EndPagePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool EndPagePrinter(IntPtr hPrinter);
+  [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+  public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, Int32 dwCount, out Int32 dwWritten);
+  public static bool Send(string printer, byte[] data) {
+    IntPtr h;
+    if (!OpenPrinter(printer, out h, IntPtr.Zero)) return false;
+    DOCINFOA di = new DOCINFOA();
+    di.pDocName = "Samosa POS Receipt";
+    di.pDataType = "RAW";
+    bool ok = false;
+    if (StartDocPrinter(h, 1, di)) {
+      if (StartPagePrinter(h)) {
+        IntPtr p = Marshal.AllocCoTaskMem(data.Length);
+        Marshal.Copy(data, 0, p, data.Length);
+        int w;
+        ok = WritePrinter(h, p, data.Length, out w);
+        Marshal.FreeCoTaskMem(p);
+        EndPagePrinter(h);
+      }
+      EndDocPrinter(h);
+    }
+    ClosePrinter(h);
+    return ok;
+  }
+}
+"@
+Add-Type -TypeDefinition $code
+if ([RawPrint]::Send($Printer, [IO.File]::ReadAllBytes($DataFile))) { Write-Output 'OK' } else { Write-Output 'FAIL' }
+""";
+
 List<int> _ascii(String t) =>
     t.runes.map((r) => (r >= 32 && r < 127) ? r : 0x3F).toList();
 
 class _Esc {
   final List<int> b = [];
+  bool boldOk = true;
   void raw(List<int> x) => b.addAll(x);
   void init() => raw([0x1B, 0x40]);
   void align(int n) => raw([0x1B, 0x61, n]);
-  void bold(bool on) => raw([0x1B, 0x45, on ? 1 : 0]);
+  void bold(bool on) => raw([0x1B, 0x45, (on && boldOk) ? 1 : 0]);
   void size(int n) => raw([0x1D, 0x21, n]);
   void text(String t) {
     b.addAll(_ascii(t));
@@ -81,14 +137,19 @@ class ThermalPrinter {
     final cols = _cols(s);
     final wide = cols >= 40;
     final line = '-' * cols;
-    final e = _Esc()
+    final e = _Esc()..boldOk = s['t_bold'] != '0';
+    e
       ..init()
-      ..align(1)
-      ..bold(true)
-      ..text(s['shop_name'] ?? '')
-      ..bold(false)
-      ..text(s['shop_address'] ?? '')
-      ..text('Ph: ${s['shop_phone'] ?? ''}')
+      ..align(1);
+    if (s['t_hname'] != '0') {
+      e
+        ..bold(true)
+        ..text(s['shop_name'] ?? '')
+        ..bold(false);
+    }
+    if (s['t_haddr'] != '0') e.text(s['shop_address'] ?? '');
+    if (s['t_hphone'] != '0') e.text('Ph: ${s['shop_phone'] ?? ''}');
+    e
       ..text(line)
       ..size(0x11)
       ..bold(true)
@@ -107,6 +168,10 @@ class ThermalPrinter {
       }
     } else {
       e.text(d.summary);
+    }
+    if (s['t_qty'] != '0' && d.lines.isNotEmpty) {
+      final qty = d.lines.fold<int>(0, (a, l) => a + l.qty);
+      e.text(_lr('Total qty', '$qty', cols));
     }
     e.text(line);
     if (d.discount > 0) {
@@ -134,14 +199,32 @@ class ThermalPrinter {
     e
       ..text('')
       ..text(d.billNo)
-      ..text('Thank you! Visit again.')
-      ..feed(4)
-      ..cut();
+      ..text(s['t_footer'] ?? 'Thank you! Visit again.');
+    final feed = (int.tryParse(s['t_feed'] ?? '') ?? 4).clamp(0, 12).toInt();
+    if (feed > 0) e.feed(feed);
+    if (s['t_cut'] != '0') e.cut();
+    if (s['t_drawer'] == '1') e.raw([0x1B, 0x70, 0x00, 0x19, 0xFA]);
     return e.b;
   }
 
-  static Future<void> printReceipt(ReceiptData d, Map<String, String> s) async =>
-      _send(s, await _build(d, s));
+  static Future<void> printReceipt(ReceiptData d, Map<String, String> s) async {
+    final one = await _build(d, s);
+    final n = (int.tryParse(s['t_copies'] ?? '') ?? 1).clamp(1, 5).toInt();
+    await _send(s, [for (var i = 0; i < n; i++) ...one]);
+  }
+
+  static Future<List<String>> windowsPrinters() async {
+    final r = await Process.run('powershell', [
+      '-NoProfile',
+      '-Command',
+      'Get-CimInstance Win32_Printer | Select-Object -ExpandProperty Name'
+    ]);
+    return '${r.stdout}'
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
 
   static Future<void> test(Map<String, String> s) async {
     final cols = _cols(s);
@@ -169,6 +252,30 @@ class ThermalPrinter {
       sock.add(bytes);
       await sock.flush();
       await sock.close();
+      return;
+    }
+    if (mode == 'windows') {
+      final name = (s['printer_win_name'] ?? '').trim();
+      if (name.isEmpty) throw Exception('Choose a Windows printer in Settings');
+      final dir = await getTemporaryDirectory();
+      final data = File(p.join(dir.path, 'receipt_raw.bin'));
+      await data.writeAsBytes(bytes);
+      final ps1 = File(p.join(dir.path, 'raw_print.ps1'));
+      await ps1.writeAsString(_rawPrintScript);
+      final r = await Process.run('powershell', [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        ps1.path,
+        '-Printer',
+        name,
+        '-DataFile',
+        data.path
+      ]);
+      if (!'${r.stdout}'.contains('OK')) {
+        throw Exception('Windows printer rejected the data. ${r.stderr}');
+      }
       return;
     }
     if (!Platform.isAndroid) {

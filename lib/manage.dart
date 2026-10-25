@@ -1214,6 +1214,11 @@ class _SettingsViewState extends State<SettingsView> {
   String _pname = '';
   final _pip = TextEditingController();
   final _pcols = TextEditingController();
+  final Map<String, String> _t = {};
+  static const _tKeys = [
+    'printer_win_name', 't_bold', 't_cut', 't_drawer', 't_feed', 't_copies',
+    't_hname', 't_haddr', 't_hphone', 't_qty', 't_footer'
+  ];
   static const _presets = [
     ('80 mm roll', '80', '0'),
     ('58 mm roll', '58', '0'),
@@ -1270,6 +1275,9 @@ class _SettingsViewState extends State<SettingsView> {
       _pname = s['printer_bt_name'] ?? '';
       _pip.text = s['printer_ip'] ?? '';
       _pcols.text = s['thermal_cols'] ?? '';
+      for (final k in _tKeys) {
+        _t[k] = s[k] ?? kDefaultSettings[k] ?? '';
+      }
       _loaded = true;
     });
   }
@@ -1377,6 +1385,7 @@ class _SettingsViewState extends State<SettingsView> {
         'printer_bt_name': _pname,
         'printer_ip': _pip.text.trim(),
         'thermal_cols': _pcols.text.trim(),
+        ..._t,
       };
 
   Future<void> _choosePrinter() async {
@@ -1408,6 +1417,54 @@ class _SettingsViewState extends State<SettingsView> {
         _pname = pick.name;
         _pmac = pick.macAdress;
       });
+    } catch (e) {
+      if (mounted) toast(context, '$e', error: true);
+    }
+  }
+
+  Widget _tSwitch(String k, String label) => SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(label),
+        value: _t[k] == '1',
+        onChanged: (v) => setState(() => _t[k] = v ? '1' : '0'),
+      );
+
+  Widget _tField(String k, String label, {bool number = true}) => Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: TextFormField(
+          key: ValueKey('tf_$k'),
+          initialValue: _t[k],
+          keyboardType: number ? TextInputType.number : TextInputType.text,
+          onChanged: (v) => _t[k] = v,
+          decoration: InputDecoration(
+              labelText: label,
+              border: const OutlineInputBorder(),
+              isDense: true),
+        ),
+      );
+
+  Future<void> _chooseWinPrinter() async {
+    try {
+      final list = await ThermalPrinter.windowsPrinters();
+      if (!mounted) return;
+      if (list.isEmpty) {
+        toast(context, 'No printers found. Install the printer in Windows first.',
+            error: true);
+        return;
+      }
+      final pick = await showDialog<String>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: Text(tr(_ur, 'Choose printer', 'پرنٹر منتخب کریں')),
+          children: [
+            for (final n in list)
+              SimpleDialogOption(
+                  onPressed: () => Navigator.pop(ctx, n), child: Text(n)),
+          ],
+        ),
+      );
+      if (pick != null) setState(() => _t['printer_win_name'] = pick);
     } catch (e) {
       if (mounted) toast(context, '$e', error: true);
     }
@@ -1637,7 +1694,10 @@ class _SettingsViewState extends State<SettingsView> {
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             DropdownButton<String>(
-              value: (_pmode == 'bluetooth' && !Platform.isAndroid) ? 'system' : _pmode,
+              value: ((_pmode == 'bluetooth' && !Platform.isAndroid) ||
+                      (_pmode == 'windows' && !Platform.isWindows))
+                  ? 'system'
+                  : _pmode,
               isExpanded: true,
               items: [
                 DropdownMenuItem(
@@ -1648,6 +1708,11 @@ class _SettingsViewState extends State<SettingsView> {
                       value: 'bluetooth',
                       child: Text(tr(_ur, 'Bluetooth thermal printer (recommended)',
                           'بلوٹوتھ تھرمل پرنٹر (تجویز کردہ)'))),
+                if (Platform.isWindows)
+                  DropdownMenuItem(
+                      value: 'windows',
+                      child: Text(tr(_ur, 'Windows installed printer (USB / shared)',
+                          'ونڈوز انسٹال شدہ پرنٹر (USB)'))),
                 DropdownMenuItem(
                     value: 'network',
                     child: Text(tr(_ur, 'Wi-Fi / LAN thermal printer',
@@ -1677,18 +1742,62 @@ class _SettingsViewState extends State<SettingsView> {
                         'پرنٹر کا IP ایڈریس (پورٹ 9100)'),
                     border: const OutlineInputBorder()),
               ),
+            if (_pmode == 'windows')
+              Row(
+                children: [
+                  Expanded(
+                      child: Text((_t['printer_win_name'] ?? '').isEmpty
+                          ? tr(_ur, 'No printer chosen', 'کوئی پرنٹر منتخب نہیں')
+                          : _t['printer_win_name']!)),
+                  OutlinedButton(
+                    onPressed: _chooseWinPrinter,
+                    child: Text(tr(_ur, 'Choose', 'منتخب کریں')),
+                  ),
+                ],
+              ),
             if (_pmode != 'system') ...[
+              const SizedBox(height: 12),
+              Text(tr(_ur, 'Thermal page size', 'تھرمل پیج سائز'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final o in const [
+                    ('2 inch (58mm)', '58', '32'),
+                    ('3 inch (80mm)', '80', '48'),
+                    ('4 inch (112mm)', '112', '64'),
+                  ])
+                    ChoiceChip(
+                      label: Text(o.$1),
+                      selected: _pw.text == o.$2 && _pcols.text == o.$3,
+                      onSelected: (_) => setState(() {
+                        _pw.text = o.$2;
+                        _pcols.text = o.$3;
+                      }),
+                    ),
+                ],
+              ),
               const SizedBox(height: 10),
               TextField(
                 controller: _pcols,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                    labelText: tr(_ur,
-                        'Characters per line (blank = auto: 48 for 80 mm, 32 for 58 mm)',
-                        'ہر لائن میں حروف (خالی = آٹو)'),
-                    border: const OutlineInputBorder()),
+                    labelText: tr(_ur, 'Custom: characters per line',
+                        'کسٹم: ہر لائن میں حروف'),
+                    border: const OutlineInputBorder(),
+                    isDense: true),
               ),
-              const SizedBox(height: 8),
+              _tSwitch('t_bold', tr(_ur, 'Use text styling (bold)', 'بولڈ ٹیکسٹ')),
+              _tSwitch('t_cut', tr(_ur, 'Auto cut paper after printing', 'پرنٹ کے بعد آٹو کٹ')),
+              _tSwitch('t_drawer', tr(_ur, 'Open cash drawer after printing', 'پرنٹ کے بعد کیش دراز کھولیں')),
+              _tSwitch('t_qty', tr(_ur, 'Print total item quantity', 'کل آئٹم تعداد پرنٹ کریں')),
+              _tSwitch('t_hname', tr(_ur, 'Print shop name', 'دکان کا نام پرنٹ کریں')),
+              _tSwitch('t_haddr', tr(_ur, 'Print shop address', 'دکان کا پتہ پرنٹ کریں')),
+              _tSwitch('t_hphone', tr(_ur, 'Print shop phone', 'دکان کا فون پرنٹ کریں')),
+              _tField('t_feed', tr(_ur, 'Extra lines at the end', 'آخر میں اضافی لائنیں')),
+              _tField('t_copies', tr(_ur, 'Number of copies', 'کاپیوں کی تعداد')),
+              _tField('t_footer', tr(_ur, 'Footer message', 'فوٹر پیغام'), number: false),
+              const SizedBox(height: 10),
               OutlinedButton.icon(
                 onPressed: _testPrint,
                 icon: const Icon(Icons.print),

@@ -73,6 +73,17 @@ const Map<String, String> kDefaultSettings = {
   'printer_bt_name': '',
   'printer_ip': '',
   'thermal_cols': '',
+  'printer_win_name': '',
+  't_bold': '1',
+  't_cut': '1',
+  't_drawer': '0',
+  't_feed': '4',
+  't_copies': '1',
+  't_hname': '1',
+  't_haddr': '1',
+  't_hphone': '1',
+  't_qty': '1',
+  't_footer': 'Thank you! Visit again.',
   'backup_keep': '10',
 };
 
