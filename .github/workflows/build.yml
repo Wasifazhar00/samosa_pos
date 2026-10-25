@@ -42,6 +42,9 @@ jobs:
             rm -rf test
           fi
           sed -i 's/android:label="[^"]*"/android:label="Samosa POS"/' android/app/src/main/AndroidManifest.xml
+          if ! grep -q BLUETOOTH_CONNECT android/app/src/main/AndroidManifest.xml; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <application|' android/app/src/main/AndroidManifest.xml
+          fi
 
       - name: Configure release signing (if secrets exist)
         shell: bash
