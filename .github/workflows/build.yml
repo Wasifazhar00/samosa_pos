@@ -43,9 +43,25 @@ jobs:
           fi
           sed -i 's/android:label="[^"]*"/android:label="Samosa POS"/' android/app/src/main/AndroidManifest.xml
 
+      - name: Configure release signing (if secrets exist)
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.jks
+            printf "storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=release.jks\n" "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" > android/key.properties
+            python3 ci/patch_signing.py
+          else
+            echo "No keystore secrets found: building a debug-signed APK"
+          fi
+
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
-      - run: flutter build apk --release
+      - run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk SamosaPOS.apk
@@ -80,7 +96,7 @@ jobs:
           fi
 
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release --build-number=${{ github.run_number }}
 
       - name: Zip the Windows app
         shell: pwsh
