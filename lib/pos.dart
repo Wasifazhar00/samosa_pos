@@ -129,13 +129,17 @@ class CartController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addMany(MenuItem m, int q) {
+  void addMany(MenuItem m, int q, {double? price}) {
     final i = items.indexWhere((c) => c.item.id == m.id);
+    final CartItem line;
     if (i >= 0) {
-      items[i].quantity += q;
+      line = items[i];
+      line.quantity += q;
     } else {
-      items.add(CartItem(item: m, quantity: q));
+      line = CartItem(item: m, quantity: q);
+      items.add(line);
     }
+    if (price != null) line.customPrice = price;
     notifyListeners();
   }
 
@@ -286,15 +290,18 @@ class _PosTerminalViewState extends State<PosTerminalView> {
   }
 
   Future<void> _askQty(MenuItem item) async {
-    final v = await promptNumber(
-      context,
-      title: _ur ? item.nameUr : item.nameEn,
-      label: tr(_ur, 'Quantity to add', 'شامل کرنے کی مقدار'),
-      allowZero: false,
-      ok: tr(_ur, 'Add', 'شامل کریں'),
-      cancel: tr(_ur, 'Cancel', 'منسوخ'),
+    final res = await showDialog<(int, double)>(
+      context: context,
+      builder: (_) => _QtyRateDialog(
+        title: _ur ? item.nameUr : item.nameEn,
+        basePrice: item.price,
+        isUrdu: _ur,
+      ),
     );
-    if (v != null && v >= 1) widget.cart.addMany(item, v.floor());
+    if (res != null) {
+      widget.cart.addMany(item, res.$1,
+          price: res.$2 != item.price ? res.$2 : null);
+    }
   }
 
   void _closeSheet() {
@@ -948,84 +955,94 @@ class _CartLine extends StatelessWidget {
   final CartItem line;
   final bool isUrdu;
 
+  Widget _box(String text, VoidCallback onTap, {Color? color, double width = 52}) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          border: Border.all(color: color ?? Colors.grey.shade500, width: 1.4),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontWeight: FontWeight.bold, color: color),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = isUrdu ? line.item.nameUr : line.item.nameEn;
+    final changed = line.customPrice != line.item.price;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: InkWell(
-              onTap: () async {
+          Row(
+            children: [
+              Expanded(
+                child: Text(name,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ),
+              Text(money(line.total),
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: () => cart.decrement(line),
+              ),
+              _box('${line.quantity}', () async {
                 final v = await promptNumber(
                   context,
                   title: name,
-                  label: tr(isUrdu, 'Price (Rs.)', 'قیمت (روپے)'),
-                  initial: line.customPrice,
+                  label: tr(isUrdu, 'Quantity (0 removes)', 'مقدار (0 سے ہٹ جائے گا)'),
+                  initial: line.quantity.toDouble(),
                   ok: tr(isUrdu, 'OK', 'ٹھیک ہے'),
                   cancel: tr(isUrdu, 'Cancel', 'منسوخ'),
                 );
-                if (v != null) cart.setPrice(line, v);
-              },
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name,
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  Text(
-                    '${money(line.customPrice)} ${tr(isUrdu, 'each', 'فی عدد')}',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
+                if (v != null) cart.setQty(line, v.floor());
+              }),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add_circle_outline),
+                onPressed: () => cart.increment(line),
               ),
-            ),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.remove_circle_outline),
-            onPressed: () => cart.decrement(line),
-          ),
-          InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: () async {
-              final v = await promptNumber(
-                context,
-                title: name,
-                label: tr(isUrdu, 'Quantity (0 removes)', 'مقدار (0 سے ہٹ جائے گا)'),
-                initial: line.quantity.toDouble(),
-                ok: tr(isUrdu, 'OK', 'ٹھیک ہے'),
-                cancel: tr(isUrdu, 'Cancel', 'منسوخ'),
-              );
-              if (v != null) cart.setQty(line, v.floor());
-            },
-            child: Container(
-              width: 46,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade400),
-                borderRadius: BorderRadius.circular(6),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6),
+                child: Text('x', style: TextStyle(fontSize: 16)),
               ),
-              child: Text('${line.quantity}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: () => cart.increment(line),
-          ),
-          SizedBox(
-            width: 70,
-            child: Text(
-              money(line.total),
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
+              _box(
+                qtyText(line.customPrice),
+                () async {
+                  final v = await promptNumber(
+                    context,
+                    title: name,
+                    label: tr(isUrdu, 'Rate per item (Rs.)', 'فی عدد ریٹ (روپے)'),
+                    initial: line.customPrice,
+                    ok: tr(isUrdu, 'OK', 'ٹھیک ہے'),
+                    cancel: tr(isUrdu, 'Cancel', 'منسوخ'),
+                  );
+                  if (v != null) cart.setPrice(line, v);
+                },
+                color: changed ? Colors.deepOrange : null,
+                width: 76,
+              ),
+            ],
           ),
         ],
       ),
@@ -1132,6 +1149,87 @@ class TablesView extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _QtyRateDialog extends StatefulWidget {
+  const _QtyRateDialog({
+    required this.title,
+    required this.basePrice,
+    required this.isUrdu,
+  });
+
+  final String title;
+  final double basePrice;
+  final bool isUrdu;
+
+  @override
+  State<_QtyRateDialog> createState() => _QtyRateDialogState();
+}
+
+class _QtyRateDialogState extends State<_QtyRateDialog> {
+  late final TextEditingController _q = TextEditingController(text: '1');
+  late final TextEditingController _r =
+      TextEditingController(text: qtyText(widget.basePrice));
+  String? _error;
+
+  @override
+  void dispose() {
+    _q.dispose();
+    _r.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final q = int.tryParse(_q.text.trim());
+    final r = double.tryParse(_r.text.trim());
+    if (q == null || q < 1 || r == null || r < 0) {
+      setState(() => _error = 'Enter a valid quantity and rate');
+      return;
+    }
+    Navigator.pop(context, (q, r));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ur = widget.isUrdu;
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _q,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: InputDecoration(
+                labelText: tr(ur, 'Quantity', 'مقدار'),
+                border: const OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _r,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+            decoration: InputDecoration(
+              labelText: tr(ur, 'Rate per item (menu: ${qtyText(widget.basePrice)})',
+                  'فی عدد ریٹ (مینو: ${qtyText(widget.basePrice)})'),
+              errorText: _error,
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(tr(ur, 'Cancel', 'منسوخ')),
+        ),
+        FilledButton(onPressed: _submit, child: Text(tr(ur, 'Add', 'شامل کریں'))),
+      ],
     );
   }
 }
