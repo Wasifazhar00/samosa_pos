@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -20,9 +21,11 @@ import 'ui_helpers.dart';
  * ========================================================================= */
 
 class MenuManagementView extends StatefulWidget {
-  const MenuManagementView({super.key, required this.isUrdu});
+  const MenuManagementView(
+      {super.key, required this.isUrdu, required this.locked});
 
   final bool isUrdu;
+  final bool locked;
 
   @override
   State<MenuManagementView> createState() => _MenuManagementViewState();
@@ -127,16 +130,23 @@ class _MenuManagementViewState extends State<MenuManagementView> {
           return Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 720),
-              child: ListView.builder(
+              child: ReorderableListView.builder(
+                buildDefaultDragHandles: false,
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
                 itemCount: items.length,
+                onReorder: (o, n) {
+                  final l = List<MenuItem>.of(items);
+                  if (n > o) n -= 1;
+                  l.insert(n, l.removeAt(o));
+                  DatabaseHelper.instance.reorderMenu([for (final m in l) m.id!]);
+                },
                 itemBuilder: (context, index) {
                   final item = items[index];
                   return Card(
+                    key: ValueKey(item.id),
                     child: ListTile(
-                      leading: Icon(item.iconData,
-                          size: 30,
-                          color: Theme.of(context).colorScheme.primary),
+                      leading: Thumb(
+                          path: item.imagePath, icon: item.iconData, size: 44),
                       title: Text(
                         _ur ? item.nameUr : item.nameEn,
                         maxLines: 1,
@@ -149,6 +159,11 @@ class _MenuManagementViewState extends State<MenuManagementView> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (!widget.locked)
+                            ReorderableDragStartListener(
+                              index: index,
+                              child: const Icon(Icons.drag_handle),
+                            ),
                           Switch(
                             value: item.inStock,
                             onChanged: (v) => DatabaseHelper.instance
@@ -205,6 +220,7 @@ class _MenuItemDialogState extends State<_MenuItemDialog> {
   late final TextEditingController _price = TextEditingController(
       text: widget.item == null ? '' : qtyText(widget.item!.price));
   late String _icon = widget.item?.iconKey ?? 'fastfood';
+  late String _img = widget.item?.imagePath ?? '';
   String? _nameError;
   String? _priceError;
 
@@ -233,6 +249,7 @@ class _MenuItemDialogState extends State<_MenuItemDialog> {
         price: price!,
         iconKey: _icon,
         inStock: widget.item?.inStock ?? true,
+        imagePath: _img,
       ),
     );
   }
@@ -270,6 +287,12 @@ class _MenuItemDialogState extends State<_MenuItemDialog> {
               decoration: InputDecoration(
                   labelText: tr(ur, 'Price (Rs.)', 'قیمت (روپے)'),
                   errorText: _priceError),
+            ),
+            const SizedBox(height: 12),
+            ImagePickRow(
+              path: _img,
+              icon: kIconChoices[_icon] ?? Icons.fastfood,
+              onChanged: (v) => setState(() => _img = v),
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -436,9 +459,11 @@ class _RecipeDialogState extends State<_RecipeDialog> {
  * ========================================================================= */
 
 class InventoryView extends StatefulWidget {
-  const InventoryView({super.key, required this.isUrdu});
+  const InventoryView(
+      {super.key, required this.isUrdu, required this.locked});
 
   final bool isUrdu;
+  final bool locked;
 
   @override
   State<InventoryView> createState() => _InventoryViewState();
@@ -548,16 +573,27 @@ class _InventoryViewState extends State<InventoryView> {
           return Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 720),
-              child: ListView.builder(
+              child: ReorderableListView.builder(
+                buildDefaultDragHandles: false,
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
                 itemCount: items.length,
+                onReorder: (o, n) {
+                  final l = List<InventoryItem>.of(items);
+                  if (n > o) n -= 1;
+                  l.insert(n, l.removeAt(o));
+                  DatabaseHelper.instance
+                      .reorderInventory([for (final m in l) m.id!]);
+                },
                 itemBuilder: (context, index) {
                   final item = items[index];
                   final low = item.isLow;
                   return Card(
+                    key: ValueKey(item.id),
                     child: ListTile(
-                      leading: Icon(Icons.inventory_2,
-                          size: 30,
+                      leading: Thumb(
+                          path: item.imagePath,
+                          icon: Icons.inventory_2,
+                          size: 44,
                           color: low ? Colors.red.shade700 : Colors.green.shade700),
                       title: Text(item.name,
                           style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -572,6 +608,11 @@ class _InventoryViewState extends State<InventoryView> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (!widget.locked)
+                            ReorderableDragStartListener(
+                              index: index,
+                              child: const Icon(Icons.drag_handle),
+                            ),
                           Text(
                             '${qtyText(item.stockQty)} ${item.unit}',
                             style: TextStyle(
@@ -638,6 +679,7 @@ class _MaterialDialogState extends State<_MaterialDialog> {
   String? _nameError;
   String? _qtyError;
   String? _lowError;
+  late String _img = widget.item?.imagePath ?? '';
 
   bool get _isNew => widget.item == null;
 
@@ -668,6 +710,7 @@ class _MaterialDialogState extends State<_MaterialDialog> {
         stockQty: qty!,
         unit: _unit.text.trim().isEmpty ? 'pcs' : _unit.text.trim(),
         lowLevel: low!,
+        imagePath: _img,
       ),
     );
   }
@@ -689,6 +732,12 @@ class _MaterialDialogState extends State<_MaterialDialog> {
               decoration: InputDecoration(
                   labelText: tr(ur, 'Material name', 'سامان کا نام'),
                   errorText: _nameError),
+            ),
+            const SizedBox(height: 8),
+            ImagePickRow(
+              path: _img,
+              icon: Icons.inventory_2,
+              onChanged: (v) => setState(() => _img = v),
             ),
             if (_isNew)
               TextField(
@@ -1217,7 +1266,8 @@ class _SettingsViewState extends State<SettingsView> {
   final Map<String, String> _t = {};
   static const _tKeys = [
     'printer_win_name', 't_bold', 't_cut', 't_drawer', 't_feed', 't_copies',
-    't_hname', 't_haddr', 't_hphone', 't_qty', 't_footer'
+    't_hname', 't_haddr', 't_hphone', 't_qty', 't_footer',
+    'enable_tables', 'pay_cash', 'pay_online', 'pay_udhar', 'menu_layout'
   ];
   static const _presets = [
     ('80 mm roll', '80', '0'),
@@ -1293,6 +1343,13 @@ class _SettingsViewState extends State<SettingsView> {
           context,
           tr(_ur, 'Keep at least one order type switched on.',
               'کم از کم ایک آرڈر قسم آن رکھیں۔'),
+          error: true);
+      return;
+    }
+    if (_t['pay_cash'] == '0' && _t['pay_online'] == '0' && _t['pay_udhar'] == '0') {
+      toast(context,
+          tr(_ur, 'Keep at least one payment option on.',
+              'کم از کم ایک ادائیگی کا طریقہ آن رکھیں۔'),
           error: true);
       return;
     }
@@ -1504,6 +1561,55 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
+  Future<void> _partBackup(bool menu) async {
+    try {
+      final f = menu
+          ? await BackupService.exportMenuStock()
+          : await BackupService.exportTransactions();
+      if (!mounted) return;
+      toast(context, '${tr(_ur, 'Backup saved', 'بیک اپ محفوظ ہو گیا')}: ${f.path}');
+      if (!isDesktop) await Share.shareXFiles([XFile(f.path)]);
+    } catch (e) {
+      if (mounted) toast(context, 'Backup failed: $e', error: true);
+    }
+  }
+
+  Future<void> _partRestore(bool menu) async {
+    final res = await FilePicker.platform.pickFiles();
+    final path = res?.files.single.path;
+    if (path == null || !mounted) return;
+    try {
+      final data =
+          jsonDecode(await File(path).readAsString()) as Map<String, dynamic>;
+      final tables = menu ? ['menu', 'inventory', 'recipes'] : ['sales'];
+      for (final t in tables) {
+        if (data[t] is! List) {
+          throw Exception(menu
+              ? 'Not a menu and stock backup file'
+              : 'Not a transactions backup file');
+        }
+      }
+      if (!mounted) return;
+      final ok = await confirmDialog(
+        context,
+        title: tr(_ur, 'Restore backup?', 'بیک اپ بحال کریں؟'),
+        message: menu
+            ? tr(_ur, 'Current menu, stock and recipes will be replaced.',
+                'موجودہ مینو، اسٹاک اور ریسیپیز بدل دی جائیں گی۔')
+            : tr(_ur, 'All current bills will be replaced.',
+                'موجودہ تمام بل بدل دیے جائیں گے۔'),
+        yes: tr(_ur, 'Restore', 'بحال کریں'),
+        no: tr(_ur, 'Cancel', 'منسوخ'),
+        danger: true,
+      );
+      if (!ok) return;
+      await DatabaseHelper.instance.restoreTables(data, tables);
+      if (mounted) toast(context, tr(_ur, 'Backup restored', 'بیک اپ بحال ہو گیا'));
+    } catch (e) {
+      if (mounted) toast(context, 'Restore failed: $e', error: true);
+    }
+  }
+
   Future<void> _restore() async {
     final res = await FilePicker.platform.pickFiles();
     final path = res?.files.single.path;
@@ -1690,6 +1796,39 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             const SizedBox(height: 10),
             const Divider(height: 32),
+            Text(tr(_ur, 'Layout and options', 'لے آؤٹ اور آپشنز'),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            _tSwitch('enable_tables',
+                tr(_ur, 'Enable tables and hold orders', 'ٹیبلز اور آرڈر ہولڈ فعال کریں')),
+            _tSwitch('pay_cash', tr(_ur, 'Accept Cash', 'نقد قبول کریں')),
+            _tSwitch('pay_online', tr(_ur, 'Accept Online', 'آن لائن قبول کریں')),
+            _tSwitch('pay_udhar', tr(_ur, 'Accept Udhar (credit)', 'ادھار قبول کریں')),
+            Row(
+              children: [
+                Expanded(child: Text(tr(_ur, 'Menu layout style', 'مینو لے آؤٹ'))),
+                DropdownButton<String>(
+                  value: _t['menu_layout'] ?? 'grid',
+                  items: [
+                    DropdownMenuItem(
+                        value: 'grid', child: Text(tr(_ur, 'Grid', 'گرڈ'))),
+                    DropdownMenuItem(
+                        value: 'compact',
+                        child: Text(tr(_ur, 'Compact grid', 'چھوٹا گرڈ'))),
+                    DropdownMenuItem(
+                        value: 'list', child: Text(tr(_ur, 'List', 'فہرست'))),
+                  ],
+                  onChanged: (v) => setState(() => _t['menu_layout'] = v ?? 'grid'),
+                ),
+              ],
+            ),
+            Text(
+              tr(_ur,
+                  'To rearrange menu, stock, tables or POS items: tap the lock icon at the top, drag items, then lock again.',
+                  'ترتیب بدلنے کے لیے اوپر لاک آئیکن دبائیں، آئٹم گھسیٹیں، پھر دوبارہ لاک کریں۔'),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const Divider(height: 32),
             Text(tr(_ur, 'Printer', 'پرنٹر'),
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -1852,6 +1991,26 @@ class _SettingsViewState extends State<SettingsView> {
                     icon: const Icon(Icons.share),
                     label: Text(tr(_ur, 'Share backup', 'بیک اپ شیئر کریں')),
                   ),
+                OutlinedButton.icon(
+                  onPressed: () => _partBackup(true),
+                  icon: const Icon(Icons.restaurant_menu),
+                  label: Text(tr(_ur, 'Backup menu and stock', 'مینو اور اسٹاک بیک اپ')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _partRestore(true),
+                  icon: const Icon(Icons.settings_backup_restore),
+                  label: Text(tr(_ur, 'Restore menu and stock', 'مینو اور اسٹاک بحال کریں')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _partBackup(false),
+                  icon: const Icon(Icons.receipt_long),
+                  label: Text(tr(_ur, 'Backup transactions', 'ٹرانزیکشنز بیک اپ')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _partRestore(false),
+                  icon: const Icon(Icons.settings_backup_restore),
+                  label: Text(tr(_ur, 'Restore transactions', 'ٹرانزیکشنز بحال کریں')),
+                ),
                 OutlinedButton.icon(
                   onPressed: _restore,
                   icon: const Icon(Icons.restore),

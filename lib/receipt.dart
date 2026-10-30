@@ -263,9 +263,15 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
     setState(() => _s = s);
   }
 
+  void _finish() {
+    Navigator.pop(context);
+    goHomeSignal.value++;
+  }
+
   Future<void> _printNow() async {
     try {
       await printReceipt(widget.data);
+      if (mounted) _finish();
     } catch (e) {
       if (mounted) toast(context, 'Could not print: $e', error: true);
     }
@@ -538,7 +544,7 @@ class _ReceiptPreviewModalState extends State<ReceiptPreviewModal> {
               FilledButton.icon(
                 style: FilledButton.styleFrom(
                     backgroundColor: Colors.green.shade700),
-                onPressed: () => Navigator.pop(context),
+                onPressed: _finish,
                 icon: const Icon(Icons.check, size: 18),
                 label: Text(tr(ur, 'Done', 'مکمل')),
               ),

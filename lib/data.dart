@@ -14,6 +14,17 @@ bool get isDesktop =>
     Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
 /// Returns the Urdu text when [ur] is true, otherwise the English text.
+/// Bumped to ask the main screen to return to the home (POS) tab.
+final ValueNotifier<int> goHomeSignal = ValueNotifier<int>(0);
+
+List<String> orderedTables(Map<String, String> s) {
+  final saved = (s['table_order'] ?? '')
+      .split(',')
+      .where((e) => kDineTables.contains(e))
+      .toList();
+  return [...saved, ...kDineTables.where((t) => !saved.contains(t))];
+}
+
 String tr(bool ur, String en, String urdu) => ur ? urdu : en;
 
 String money(num v) => 'Rs. ${v.toStringAsFixed(0)}';
@@ -59,6 +70,13 @@ const Map<String, String> kDefaultSettings = {
   'enable_takeaway': '1',
   'enable_delivery': '1',
   'language': 'en',
+  'enable_tables': '1',
+  'pay_cash': '1',
+  'pay_online': '1',
+  'pay_udhar': '1',
+  'lock_layout': '1',
+  'menu_layout': 'grid',
+  'table_order': '',
   'paper_width': '80',
   'paper_height': '0',
   'print_qr': '1',
@@ -108,6 +126,7 @@ class MenuItem {
     required this.price,
     required this.iconKey,
     this.inStock = true,
+    this.imagePath = '',
   });
 
   final int? id;
@@ -116,6 +135,7 @@ class MenuItem {
   final double price;
   final String iconKey;
   final bool inStock;
+  final String imagePath;
 
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
@@ -124,6 +144,7 @@ class MenuItem {
         'price': price,
         'icon_key': iconKey,
         'in_stock': inStock ? 1 : 0,
+        'image_path': imagePath,
       };
 
   factory MenuItem.fromMap(Map<String, dynamic> map) => MenuItem(
@@ -133,6 +154,7 @@ class MenuItem {
         price: ((map['price'] as num?) ?? 0).toDouble(),
         iconKey: (map['icon_key'] as String?) ?? 'fastfood',
         inStock: map['in_stock'] == 1,
+        imagePath: (map['image_path'] as String?) ?? '',
       );
 
   MenuItem copyWith({bool? inStock}) => MenuItem(
@@ -142,6 +164,7 @@ class MenuItem {
         price: price,
         iconKey: iconKey,
         inStock: inStock ?? this.inStock,
+        imagePath: imagePath,
       );
 
   IconData get iconData => kIconChoices[iconKey] ?? Icons.fastfood;
@@ -154,6 +177,7 @@ class InventoryItem {
     required this.stockQty,
     required this.unit,
     this.lowLevel = 10,
+    this.imagePath = '',
   });
 
   final int? id;
@@ -161,6 +185,7 @@ class InventoryItem {
   final double stockQty;
   final String unit;
   final double lowLevel;
+  final String imagePath;
 
   bool get isLow => stockQty <= lowLevel;
 
@@ -170,6 +195,7 @@ class InventoryItem {
         'stock_qty': stockQty,
         'unit': unit,
         'low_level': lowLevel,
+        'image_path': imagePath,
       };
 
   factory InventoryItem.fromMap(Map<String, dynamic> map) => InventoryItem(
@@ -178,6 +204,7 @@ class InventoryItem {
         stockQty: ((map['stock_qty'] as num?) ?? 0).toDouble(),
         unit: (map['unit'] as String?) ?? 'pcs',
         lowLevel: ((map['low_level'] as num?) ?? 10).toDouble(),
+        imagePath: (map['image_path'] as String?) ?? '',
       );
 }
 
@@ -323,7 +350,7 @@ class DatabaseHelper {
     final path = await getDatabasePath();
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -337,7 +364,9 @@ class DatabaseHelper {
         name_ur TEXT,
         price REAL,
         icon_key TEXT,
-        in_stock INTEGER
+        in_stock INTEGER,
+        image_path TEXT,
+        sort_order INTEGER
       )
     ''');
     await db.execute('''
@@ -346,7 +375,9 @@ class DatabaseHelper {
         name TEXT,
         stock_qty REAL,
         unit TEXT,
-        low_level REAL DEFAULT 10
+        low_level REAL DEFAULT 10,
+        image_path TEXT,
+        sort_order INTEGER
       )
     ''');
     await db.execute('''
@@ -389,6 +420,13 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE sales ADD COLUMN items_json TEXT');
       await db.execute(
           'ALTER TABLE inventory ADD COLUMN low_level REAL DEFAULT 10');
+    }
+    if (oldVersion < 3) {
+      for (final t in ['menu', 'inventory']) {
+        await db.execute('ALTER TABLE $t ADD COLUMN image_path TEXT');
+        await db.execute('ALTER TABLE $t ADD COLUMN sort_order INTEGER');
+        await db.execute('UPDATE $t SET sort_order = id');
+      }
     }
   }
 
@@ -445,13 +483,13 @@ class DatabaseHelper {
 
   Future<List<MenuItem>> getMenuItems() async {
     final db = await database;
-    final rows = await db.query('menu', orderBy: 'id');
+    final rows = await db.query('menu', orderBy: 'COALESCE(sort_order, id), id');
     return rows.map(MenuItem.fromMap).toList();
   }
 
   Future<void> addMenuItem(MenuItem item) async {
     final db = await database;
-    await db.insert('menu', item.toMap());
+    await db.insert('menu', {...item.toMap(), 'sort_order': await _nextOrder(db, 'menu')});
     _changed();
   }
 
@@ -503,13 +541,13 @@ class DatabaseHelper {
 
   Future<List<InventoryItem>> getInventory() async {
     final db = await database;
-    final rows = await db.query('inventory', orderBy: 'name COLLATE NOCASE');
+    final rows = await db.query('inventory', orderBy: 'COALESCE(sort_order, id), id');
     return rows.map(InventoryItem.fromMap).toList();
   }
 
   Future<void> addInventoryItem(InventoryItem item) async {
     final db = await database;
-    await db.insert('inventory', item.toMap());
+    await db.insert('inventory', {...item.toMap(), 'sort_order': await _nextOrder(db, 'inventory')});
     _changed();
   }
 
@@ -765,6 +803,60 @@ class DatabaseHelper {
       if (await f.exists()) await f.delete();
     }
     await File(sourcePath).copy(path);
+    _changed();
+  }
+
+  Future<int> _nextOrder(Database db, String table) async {
+    final r = await db.rawQuery(
+        'SELECT COALESCE(MAX(COALESCE(sort_order, id)), 0) + 1 AS n FROM $table');
+    return (r.first['n'] as num).toInt();
+  }
+
+  Future<void> reorderMenu(List<int> ids) => _reorder('menu', ids);
+  Future<void> reorderInventory(List<int> ids) => _reorder('inventory', ids);
+
+  Future<void> _reorder(String table, List<int> ids) async {
+    final db = await database;
+    final batch = db.batch();
+    for (var i = 0; i < ids.length; i++) {
+      batch.update(table, {'sort_order': i + 1},
+          where: 'id = ?', whereArgs: [ids[i]]);
+    }
+    await batch.commit(noResult: true);
+    _changed();
+  }
+
+  Future<Map<int, Map<int, double>>> getAllRecipes() async {
+    final db = await database;
+    final rows = await db.query('recipes');
+    final out = <int, Map<int, double>>{};
+    for (final r in rows) {
+      out.putIfAbsent(r['menu_id'] as int, () => {})[r['inventory_id'] as int] =
+          ((r['required_qty'] as num?) ?? 0).toDouble();
+    }
+    return out;
+  }
+
+  Future<Map<String, List<Map<String, Object?>>>> dumpTables(
+      List<String> tables) async {
+    final db = await database;
+    return {for (final t in tables) t: await db.query(t)};
+  }
+
+  Future<void> restoreTables(
+      Map<String, dynamic> data, List<String> tables) async {
+    for (final t in tables) {
+      if (data[t] is! List) throw Exception('Backup file is missing "$t"');
+    }
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final t in tables) {
+        await txn.delete(t);
+        for (final r in data[t] as List<dynamic>) {
+          await txn.insert(t, Map<String, Object?>.from(r as Map));
+        }
+      }
+    });
     _changed();
   }
 

@@ -225,11 +225,13 @@ class PosTerminalView extends StatefulWidget {
     required this.isUrdu,
     required this.cart,
     required this.onHold,
+    required this.locked,
   });
 
   final bool isUrdu;
   final CartController cart;
   final VoidCallback onHold;
+  final bool locked;
 
   @override
   State<PosTerminalView> createState() => _PosTerminalViewState();
@@ -247,6 +249,9 @@ class _PosTerminalViewState extends State<PosTerminalView> {
   List<String> _types = const ['Dine-In', 'Takeaway', 'Delivery'];
   BuildContext? _sheetCtx;
   bool _saving = false;
+  bool _tablesOn = true;
+  String _layout = 'grid';
+  Set<String> _pay = {'Cash', 'Online', 'Unpaid'};
 
   bool get _ur => widget.isUrdu;
 
@@ -283,6 +288,14 @@ class _PosTerminalViewState extends State<PosTerminalView> {
     if (types.isEmpty) types.add('Takeaway');
     setState(() {
       _types = types;
+      _tablesOn = s['enable_tables'] != '0';
+      _layout = s['menu_layout'] ?? 'grid';
+      _pay = {
+        if (s['pay_cash'] != '0') 'Cash',
+        if (s['pay_online'] != '0') 'Online',
+        if (s['pay_udhar'] != '0') 'Unpaid',
+      };
+      if (_pay.isEmpty) _pay = {'Cash'};
     });
     if (!types.contains(widget.cart.orderType)) {
       widget.cart.setOrderType(types.first);
@@ -340,6 +353,7 @@ class _PosTerminalViewState extends State<PosTerminalView> {
         cart: widget.cart,
         isUrdu: _ur,
         types: _types,
+        showTables: _tablesOn,
         onCheckout: _checkout,
         onHold: _hold,
       );
@@ -360,7 +374,7 @@ class _PosTerminalViewState extends State<PosTerminalView> {
 
     final choice = await showDialog<_PayChoice>(
       context: context,
-      builder: (_) => _PaymentDialog(isUrdu: _ur, total: cart.grandTotal),
+      builder: (_) => _PaymentDialog(isUrdu: _ur, total: cart.grandTotal, pay: _pay),
     );
     if (choice == null || !mounted) return;
 
@@ -435,6 +449,142 @@ class _PosTerminalViewState extends State<PosTerminalView> {
     }
   }
 
+  Widget _dragWrap(List<MenuItem> items, int index, Widget child) {
+    if (widget.locked) return child;
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => d.data != index,
+      onAcceptWithDetails: (d) {
+        final l = List<MenuItem>.of(items);
+        l.insert(index, l.removeAt(d.data));
+        DatabaseHelper.instance.reorderMenu([for (final m in l) m.id!]);
+      },
+      builder: (context, cand, rej) => LongPressDraggable<int>(
+        data: index,
+        feedback: Material(
+          color: Colors.transparent,
+          child: SizedBox(
+              width: 130,
+              height: 100,
+              child: Opacity(opacity: 0.85, child: child)),
+        ),
+        childWhenDragging: Opacity(opacity: 0.3, child: child),
+        child: Container(
+          decoration: cand.isNotEmpty
+              ? BoxDecoration(
+                  border: Border.all(color: Colors.deepOrange, width: 2),
+                  borderRadius: BorderRadius.circular(12))
+              : null,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(MenuItem item, String style) {
+    final scheme = Theme.of(context).colorScheme;
+    final inCart = widget.cart.items
+        .where((c) => c.item.id == item.id)
+        .fold<int>(0, (sum, c) => sum + c.quantity);
+    final name = _ur ? item.nameUr : item.nameEn;
+    final compact = style == 'compact';
+    final priceText =
+        item.inStock ? money(item.price) : tr(_ur, 'OUT OF STOCK', 'اسٹاک ختم');
+    final priceColor = item.inStock ? scheme.primary : Colors.red.shade700;
+    final badge = CircleAvatar(
+      radius: 12,
+      backgroundColor: Colors.green.shade700,
+      child: Text('$inCart',
+          style: const TextStyle(fontSize: 12, color: Colors.white)),
+    );
+    final Widget body;
+    if (style == 'list') {
+      body = Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          children: [
+            Thumb(path: item.imagePath, icon: item.iconData, size: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(priceText,
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, color: priceColor)),
+                ],
+              ),
+            ),
+            if (inCart > 0) badge,
+            if (item.inStock)
+              IconButton(
+                tooltip: tr(_ur, 'Enter quantity', 'مقدار درج کریں'),
+                icon: const Icon(Icons.dialpad, size: 20),
+                onPressed: () => _askQty(item),
+              ),
+          ],
+        ),
+      );
+    } else {
+      body = Center(
+        child: Padding(
+          padding: EdgeInsets.all(compact ? 4 : 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Thumb(
+                  path: item.imagePath,
+                  icon: item.iconData,
+                  size: compact ? 34 : 60),
+              SizedBox(height: compact ? 3 : 6),
+              Text(name,
+                  style: TextStyle(
+                      fontSize: compact ? 12 : 15, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+              Text(priceText,
+                  style: TextStyle(
+                      fontSize: compact ? 12 : 14,
+                      fontWeight: FontWeight.bold,
+                      color: priceColor)),
+            ],
+          ),
+        ),
+      );
+    }
+    return Card(
+      elevation: 2,
+      clipBehavior: Clip.antiAlias,
+      color: item.inStock ? Colors.orange.shade50 : Colors.grey.shade300,
+      child: InkWell(
+        onTap: item.inStock ? () => widget.cart.add(item) : null,
+        onLongPress:
+            (item.inStock && widget.locked) ? () => _askQty(item) : null,
+        child: Stack(
+          children: [
+            body,
+            if (style != 'list' && item.inStock)
+              PositionedDirectional(
+                top: 0,
+                start: 0,
+                child: IconButton(
+                  tooltip: tr(_ur, 'Enter quantity', 'مقدار درج کریں'),
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.dialpad, size: compact ? 14 : 18),
+                  onPressed: () => _askQty(item),
+                ),
+              ),
+            if (style != 'list' && inCart > 0)
+              PositionedDirectional(top: 6, end: 6, child: badge),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _menuGrid() {
     return FutureBuilder<List<MenuItem>>(
       future: _menuFuture,
@@ -458,99 +608,31 @@ class _PosTerminalViewState extends State<PosTerminalView> {
             ),
           );
         }
-        final scheme = Theme.of(context).colorScheme;
         return ListenableBuilder(
           listenable: widget.cart,
-          builder: (context, _) => GridView.builder(
-            padding: const EdgeInsets.all(8),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 180,
-              childAspectRatio: 1.05,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final item = items[index];
-              final inCart = widget.cart.items
-                  .where((c) => c.item.id == item.id)
-                  .fold<int>(0, (sum, c) => sum + c.quantity);
-              return Card(
-                elevation: 2,
-                clipBehavior: Clip.antiAlias,
-                color: item.inStock
-                    ? Colors.orange.shade50
-                    : Colors.grey.shade300,
-                child: InkWell(
-                  onTap: item.inStock ? () => widget.cart.add(item) : null,
-                  onLongPress: item.inStock ? () => _askQty(item) : null,
-                  child: Stack(
-                    children: [
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(item.iconData,
-                                  size: 34, color: scheme.primary),
-                              const SizedBox(height: 6),
-                              Text(
-                                _ur ? item.nameUr : item.nameEn,
-                                style: const TextStyle(
-                                    fontSize: 15, fontWeight: FontWeight.bold),
-                                textAlign: TextAlign.center,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                item.inStock
-                                    ? money(item.price)
-                                    : tr(_ur, 'OUT OF STOCK', 'اسٹاک ختم'),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: item.inStock
-                                      ? scheme.primary
-                                      : Colors.red.shade700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (item.inStock)
-                        PositionedDirectional(
-                          top: 0,
-                          start: 0,
-                          child: IconButton(
-                            tooltip: tr(_ur, 'Enter quantity', 'مقدار درج کریں'),
-                            visualDensity: VisualDensity.compact,
-                            icon: const Icon(Icons.dialpad, size: 18),
-                            onPressed: () => _askQty(item),
-                          ),
-                        ),
-                      if (inCart > 0)
-                        PositionedDirectional(
-                          top: 6,
-                          end: 6,
-                          child: CircleAvatar(
-                            radius: 12,
-                            backgroundColor: Colors.green.shade700,
-                            child: Text(
-                              '$inCart',
-                              style: const TextStyle(
-                                  fontSize: 12, color: Colors.white),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+          builder: (context, _) {
+            if (_layout == 'list') {
+              return ListView.builder(
+                padding: const EdgeInsets.all(8),
+                itemCount: items.length,
+                itemBuilder: (context, i) =>
+                    _dragWrap(items, i, _tile(items[i], 'list')),
               );
-            },
-          ),
+            }
+            final compact = _layout == 'compact';
+            return GridView.builder(
+              padding: const EdgeInsets.all(8),
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: compact ? 120 : 180,
+                childAspectRatio: compact ? 1.0 : 1.0,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: items.length,
+              itemBuilder: (context, i) => _dragWrap(
+                  items, i, _tile(items[i], compact ? 'compact' : 'grid')),
+            );
+          },
         );
       },
     );
@@ -637,10 +719,12 @@ class _PosTerminalViewState extends State<PosTerminalView> {
  * ========================================================================= */
 
 class _PaymentDialog extends StatefulWidget {
-  const _PaymentDialog({required this.isUrdu, required this.total});
+  const _PaymentDialog(
+      {required this.isUrdu, required this.total, required this.pay});
 
   final bool isUrdu;
   final double total;
+  final Set<String> pay;
 
   @override
   State<_PaymentDialog> createState() => _PaymentDialogState();
@@ -662,23 +746,27 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   @override
   Widget build(BuildContext context) {
     final ur = widget.isUrdu;
+    final pay = widget.pay;
     return AlertDialog(
       title: Text('${tr(ur, 'Payment', 'ادائیگی')}: ${money(widget.total)}'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _option(Icons.payments, Colors.green.shade700,
+          if (pay.contains('Cash'))
+            _option(Icons.payments, Colors.green.shade700,
               tr(ur, 'Paid: Cash', 'ادا شدہ: نقد'),
               tr(ur, 'Money received in hand', 'رقم وصول ہو گئی'), 'Cash', true),
-          _option(
+          if (pay.contains('Online'))
+            _option(
               Icons.qr_code,
               Colors.blue.shade700,
               tr(ur, 'Paid: Online', 'ادا شدہ: آن لائن'),
               'EasyPaisa / JazzCash / Bank',
               'Online',
               true),
-          const Divider(),
-          _option(
+          if (pay.contains('Unpaid') && pay.length > 1) const Divider(),
+          if (pay.contains('Unpaid'))
+            _option(
               Icons.pending_actions,
               Colors.red.shade700,
               tr(ur, 'Udhar (unpaid)', 'ادھار (غیر ادا شدہ)'),
@@ -718,6 +806,7 @@ class CartPanel extends StatelessWidget {
     required this.cart,
     required this.isUrdu,
     required this.types,
+    required this.showTables,
     required this.onCheckout,
     required this.onHold,
   });
@@ -725,6 +814,7 @@ class CartPanel extends StatelessWidget {
   final CartController cart;
   final bool isUrdu;
   final List<String> types;
+  final bool showTables;
   final VoidCallback onCheckout;
   final VoidCallback onHold;
 
@@ -753,7 +843,7 @@ class CartPanel extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 10),
-                  if (cart.orderType == 'Dine-In') ...[
+                  if (showTables && cart.orderType == 'Dine-In') ...[
                     InputDecorator(
                       decoration: InputDecoration(
                         labelText: tr(ur, 'Table (optional)', 'ٹیبل (اختیاری)'),
@@ -910,13 +1000,15 @@ class CartPanel extends StatelessWidget {
                         icon: const Icon(Icons.delete_outline),
                       ),
                       const SizedBox(width: 8),
-                      OutlinedButton(
-                        style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(0, 48)),
-                        onPressed: cart.isEmpty ? null : onHold,
-                        child: Text(tr(ur, 'Hold', 'روکیں')),
-                      ),
-                      const SizedBox(width: 8),
+                      if (showTables) ...[
+                        OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(0, 48)),
+                          onPressed: cart.isEmpty ? null : onHold,
+                          child: Text(tr(ur, 'Hold', 'روکیں')),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       Expanded(
                         child: FilledButton(
                           style: FilledButton.styleFrom(
@@ -1059,6 +1151,9 @@ class TablesView extends StatelessWidget {
     super.key,
     required this.isUrdu,
     required this.orders,
+    required this.names,
+    required this.locked,
+    required this.onReorder,
     required this.onNewOrder,
     required this.onOpen,
     required this.onDiscard,
@@ -1066,6 +1161,9 @@ class TablesView extends StatelessWidget {
 
   final bool isUrdu;
   final List<OrderToken> orders;
+  final List<String> names;
+  final bool locked;
+  final void Function(List<String> newOrder) onReorder;
   final void Function(String tableName) onNewOrder;
   final void Function(OrderToken order) onOpen;
   final void Function(OrderToken order) onDiscard;
@@ -1073,25 +1171,39 @@ class TablesView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ur = isUrdu;
-    final names = [...kDineTables, kNoTable];
+    final all = [...names, kNoTable];
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
-        child: ListView(
+        child: ReorderableListView(
+          buildDefaultDragHandles: false,
           padding: const EdgeInsets.all(12),
+          onReorder: (o, n) {
+            if (o >= names.length) return;
+            final l = [...names];
+            final x = l.removeAt(o);
+            if (n > o) n -= 1;
+            l.insert(n.clamp(0, l.length).toInt(), x);
+            onReorder(l);
+          },
           children: [
-            for (final name in names) _tableCard(context, ur, name),
+            for (var i = 0; i < all.length; i++)
+              KeyedSubtree(
+                key: ValueKey(all[i]),
+                child: _tableCard(context, ur, all[i], i),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _tableCard(BuildContext context, bool ur, String name) {
+  Widget _tableCard(BuildContext context, bool ur, String name, int index) {
     final mine = orders.where((o) => o.tableName == name).toList();
     final busy = mine.isNotEmpty;
-    final title =
-        name == kNoTable ? tr(ur, 'Takeaway / no table', 'ٹیک اوے / بغیر ٹیبل') : name;
+    final title = name == kNoTable
+        ? tr(ur, 'Takeaway / no table', 'ٹیک اوے / بغیر ٹیبل')
+        : name;
     return Card(
       color: busy ? Colors.amber.shade100 : Colors.green.shade50,
       child: Padding(
@@ -1101,6 +1213,14 @@ class TablesView extends StatelessWidget {
           children: [
             Row(
               children: [
+                if (!locked && index < names.length)
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: Icon(Icons.drag_handle),
+                    ),
+                  ),
                 Expanded(
                   child: Text(title,
                       style: const TextStyle(

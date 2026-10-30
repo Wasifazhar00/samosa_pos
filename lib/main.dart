@@ -113,6 +113,9 @@ class _MainPosScreenState extends State<MainPosScreen> {
   int _index = 0;
   Timer? _backupTimer;
   String _shopName = kDefaultSettings['shop_name']!;
+  bool _tablesOn = true;
+  bool _locked = true;
+  List<String> _tableNames = kDineTables;
 
   bool get _ur => widget.isUrdu;
 
@@ -122,6 +125,7 @@ class _MainPosScreenState extends State<MainPosScreen> {
     _loadShopName();
     _restoreHeld();
     DatabaseHelper.revision.addListener(_loadShopName);
+    goHomeSignal.addListener(_goHome);
     BackupService.runIfDue();
     _backupTimer = Timer.periodic(
         const Duration(hours: 1), (_) => BackupService.runIfDue());
@@ -131,8 +135,16 @@ class _MainPosScreenState extends State<MainPosScreen> {
   void dispose() {
     DatabaseHelper.revision.removeListener(_loadShopName);
     _backupTimer?.cancel();
+    goHomeSignal.removeListener(_goHome);
     _cart.dispose();
     super.dispose();
+  }
+
+  void _goHome() {
+    if (!mounted) return;
+    setState(() {
+      _index = 0;
+    });
   }
 
   Future<void> _loadShopName() async {
@@ -141,6 +153,9 @@ class _MainPosScreenState extends State<MainPosScreen> {
       if (!mounted) return;
       setState(() {
         _shopName = s['shop_name'] ?? _shopName;
+        _tablesOn = s['enable_tables'] != '0';
+        _locked = s['lock_layout'] != '0';
+        _tableNames = orderedTables(s);
       });
     } catch (_) {
       // Ignore: the title keeps its previous value.
@@ -261,24 +276,35 @@ class _MainPosScreenState extends State<MainPosScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ids = [
+      for (var i = 0; i < _destinations.length; i++)
+        if (_tablesOn || i != 1) i
+    ];
+    final cur = _index >= ids.length ? 0 : _index;
+    final pages = <Widget>[
+      PosTerminalView(
+          isUrdu: _ur, cart: _cart, onHold: _holdCurrent, locked: _locked),
+      TablesView(
+        isUrdu: _ur,
+        orders: _held,
+        names: _tableNames,
+        locked: _locked,
+        onReorder: (l) =>
+            DatabaseHelper.instance.setSetting('table_order', l.join(',')),
+        onNewOrder: _newOrder,
+        onOpen: _openHeld,
+        onDiscard: _discardHeld,
+      ),
+      MenuManagementView(isUrdu: _ur, locked: _locked),
+      InventoryView(isUrdu: _ur, locked: _locked),
+      ReportsAndSalesHistoryView(isUrdu: _ur),
+      SettingsView(isUrdu: _ur),
+    ];
     final body = KeyedSubtree(
       key: _bodyKey,
       child: IndexedStack(
-        index: _index,
-        children: [
-          PosTerminalView(isUrdu: _ur, cart: _cart, onHold: _holdCurrent),
-          TablesView(
-            isUrdu: _ur,
-            orders: _held,
-            onNewOrder: _newOrder,
-            onOpen: _openHeld,
-            onDiscard: _discardHeld,
-          ),
-          MenuManagementView(isUrdu: _ur),
-          InventoryView(isUrdu: _ur),
-          ReportsAndSalesHistoryView(isUrdu: _ur),
-          SettingsView(isUrdu: _ur),
-        ],
+        index: cur,
+        children: [for (final i in ids) pages[i]],
       ),
     );
 
@@ -296,6 +322,16 @@ class _MainPosScreenState extends State<MainPosScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             actions: [
+              IconButton(
+                tooltip: _locked
+                    ? tr(_ur, 'Layout locked. Tap to unlock for rearranging.',
+                        'لے آؤٹ لاک ہے۔ ترتیب بدلنے کے لیے کھولیں۔')
+                    : tr(_ur, 'Unlocked: drag items to rearrange. Tap to lock.',
+                        'کھلا ہے: آئٹم گھسیٹیں۔ لاک کرنے کے لیے دبائیں۔'),
+                icon: Icon(_locked ? Icons.lock : Icons.lock_open),
+                onPressed: () => DatabaseHelper.instance
+                    .setSetting('lock_layout', _locked ? '0' : '1'),
+              ),
               TextButton.icon(
                 style: TextButton.styleFrom(foregroundColor: Colors.white),
                 onPressed: widget.onToggleLanguage,
@@ -309,11 +345,11 @@ class _MainPosScreenState extends State<MainPosScreen> {
               ? Row(
                   children: [
                     NavigationRail(
-                      selectedIndex: _index,
+                      selectedIndex: cur,
                       onDestinationSelected: (i) => setState(() => _index = i),
                       labelType: NavigationRailLabelType.all,
                       destinations: [
-                        for (var i = 0; i < _destinations.length; i++)
+                        for (final i in ids)
                           NavigationRailDestination(
                             icon: _iconFor(i),
                             label: Text(
@@ -329,11 +365,11 @@ class _MainPosScreenState extends State<MainPosScreen> {
           bottomNavigationBar: wide
               ? null
               : NavigationBar(
-                  selectedIndex: _index,
+                  selectedIndex: cur,
                   onDestinationSelected: (i) => setState(() => _index = i),
                   labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
                   destinations: [
-                    for (var i = 0; i < _destinations.length; i++)
+                    for (final i in ids)
                       NavigationDestination(
                         icon: _iconFor(i),
                         label: tr(_ur, _destinations[i].en, _destinations[i].ur),

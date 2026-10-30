@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -24,6 +25,8 @@ class BackupService {
     final dir = await backupDir();
     final out = await src
         .copy(p.join(dir.path, 'samosa_pos_${prefix}_${fileStamp()}.db'));
+    await exportMenuStock(prefix: prefix);
+    await exportTransactions(prefix: prefix);
     final s = await DatabaseHelper.instance.getSettings();
     await _prune(dir, int.tryParse(s['backup_keep'] ?? '') ?? 10);
     await DatabaseHelper.instance
@@ -31,17 +34,37 @@ class BackupService {
     return out;
   }
 
+  static Future<File> _json(String name, List<String> tables) async {
+    final dir = await backupDir();
+    final data = await DatabaseHelper.instance.dumpTables(tables);
+    final f = File(p.join(dir.path, 'samosa_pos_${name}_${fileStamp()}.json'));
+    await f.writeAsString(jsonEncode({'version': 1, ...data}));
+    return f;
+  }
+
+  static Future<File> exportMenuStock({String prefix = 'manual'}) =>
+      _json('${prefix}_menu_stock', ['menu', 'inventory', 'recipes']);
+
+  static Future<File> exportTransactions({String prefix = 'manual'}) =>
+      _json('${prefix}_transactions', ['sales']);
+
   static Future<void> _prune(Directory dir, int keep) async {
-    final files = dir
-        .listSync()
-        .whereType<File>()
-        .where((f) => p.basename(f.path).startsWith('samosa_pos_auto_'))
-        .toList()
-      ..sort((a, b) => b.path.compareTo(a.path));
-    for (final f in files.skip(keep)) {
-      try {
-        await f.delete();
-      } catch (_) {}
+    for (final prefix in [
+      'samosa_pos_auto_menu_stock_',
+      'samosa_pos_auto_transactions_',
+      'samosa_pos_auto_2',
+    ]) {
+      final files = dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => p.basename(f.path).startsWith(prefix))
+          .toList()
+        ..sort((a, b) => b.path.compareTo(a.path));
+      for (final f in files.skip(keep)) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
     }
   }
 

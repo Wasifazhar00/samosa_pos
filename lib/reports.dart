@@ -13,6 +13,9 @@ class _Period {
   double paid = 0;
   double udhar = 0;
   double discount = 0;
+  double cash = 0;
+  double online = 0;
+  final Map<int, double> used = {};
   final Map<String, _Agg> products = {};
 }
 
@@ -26,8 +29,16 @@ class SalesReportPage extends StatefulWidget {
 }
 
 class _SalesReportPageState extends State<SalesReportPage> {
-  late final Future<List<SaleRecord>> _future =
-      DatabaseHelper.instance.getAllSales();
+  late final Future<List<SaleRecord>> _future = _load();
+  Map<int, Map<int, double>> _recipes = {};
+  Map<int, InventoryItem> _inv = {};
+
+  Future<List<SaleRecord>> _load() async {
+    final db = DatabaseHelper.instance;
+    _recipes = await db.getAllRecipes();
+    _inv = {for (final i in await db.getInventory()) i.id!: i};
+    return db.getAllSales();
+  }
   String _mode = 'daily';
 
   bool get _ur => widget.isUrdu;
@@ -43,6 +54,11 @@ class _SalesReportPageState extends State<SalesReportPage> {
     p.discount += s.discount;
     if (s.isPaid) {
       p.paid += s.totalAmount;
+      if (s.paymentMethod == 'Online') {
+        p.online += s.totalAmount;
+      } else {
+        p.cash += s.totalAmount;
+      }
     } else {
       p.udhar += s.totalAmount;
     }
@@ -52,6 +68,10 @@ class _SalesReportPageState extends State<SalesReportPage> {
         final a = p.products.putIfAbsent(l.name, _Agg.new);
         a.qty += l.qty;
         a.amount += l.total;
+        final rec = _recipes[l.menuId];
+        if (rec != null) {
+          rec.forEach((inv, q) => p.used[inv] = (p.used[inv] ?? 0) + q * l.qty);
+        }
       }
     } else {
       for (final part in s.itemsSummary.split(', ')) {
@@ -84,7 +104,7 @@ class _SalesReportPageState extends State<SalesReportPage> {
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
           '${p.bills} ${tr(_ur, 'bills', 'بل')}  -  ${tr(_ur, 'Total', 'کل')} ${money(p.total)}\n'
-          '${tr(_ur, 'Paid', 'ادا شدہ')} ${money(p.paid)}  -  ${tr(_ur, 'Udhar', 'ادھار')} ${money(p.udhar)}',
+          '${tr(_ur, 'Cash', 'نقد')} ${money(p.cash)}  -  ${tr(_ur, 'Online', 'آن لائن')} ${money(p.online)}  -  ${tr(_ur, 'Udhar', 'ادھار')} ${money(p.udhar)}',
         ),
         children: [
           line(tr(_ur, 'Product', 'پروڈکٹ'), tr(_ur, 'Qty', 'تعداد'),
@@ -97,6 +117,15 @@ class _SalesReportPageState extends State<SalesReportPage> {
             const Divider(height: 8),
             line(tr(_ur, 'Discounts given', 'دی گئی رعایت'), '',
                 '- ${money(p.discount)}'),
+          ],
+          if (p.used.isNotEmpty) ...[
+            const Divider(height: 8),
+            line(tr(_ur, 'Stock used', 'استعمال شدہ اسٹاک'), tr(_ur, 'Used', 'استعمال'),
+                tr(_ur, 'Left now', 'باقی'), bold: true),
+            for (final e in p.used.entries)
+              if (_inv[e.key] != null)
+                line(_inv[e.key]!.name, qtyText(e.value),
+                    '${qtyText(_inv[e.key]!.stockQty)} ${_inv[e.key]!.unit}'),
           ],
           const SizedBox(height: 8),
         ],
