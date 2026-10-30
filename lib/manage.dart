@@ -145,7 +145,7 @@ class _MenuManagementViewState extends State<MenuManagementView> {
                   return Card(
                     key: ValueKey(item.id),
                     child: ListTile(
-                      leading: Thumb(
+                      leading: ItemThumb(
                           path: item.imagePath, icon: item.iconData, size: 44),
                       title: Text(
                         _ur ? item.nameUr : item.nameEn,
@@ -590,7 +590,7 @@ class _InventoryViewState extends State<InventoryView> {
                   return Card(
                     key: ValueKey(item.id),
                     child: ListTile(
-                      leading: Thumb(
+                      leading: ItemThumb(
                           path: item.imagePath,
                           icon: Icons.inventory_2,
                           size: 44,

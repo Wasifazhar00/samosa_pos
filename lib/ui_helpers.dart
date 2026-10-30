@@ -146,8 +146,8 @@ class _NumberPromptDialogState extends State<_NumberPromptDialog> {
 }
 
 /// Small picture (or fallback icon) used as an item thumbnail.
-class Thumb extends StatelessWidget {
-  const Thumb({
+class ItemThumb extends StatelessWidget {
+  const ItemThumb({
     super.key,
     required this.path,
     required this.icon,
@@ -205,7 +205,7 @@ class ImagePickRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Thumb(path: path, icon: icon, size: 48),
+        ItemThumb(path: path, icon: icon, size: 48),
         const SizedBox(width: 8),
         Expanded(
           child: Wrap(
