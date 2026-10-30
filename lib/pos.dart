@@ -502,7 +502,7 @@ class _PosTerminalViewState extends State<PosTerminalView> {
         padding: const EdgeInsets.all(8),
         child: Row(
           children: [
-            ItemThumb(path: item.imagePath, icon: item.iconData, size: 44),
+            ItemThumb(path: item.imagePath, icon: item.iconData, size: 64),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -537,7 +537,7 @@ class _PosTerminalViewState extends State<PosTerminalView> {
               ItemThumb(
                   path: item.imagePath,
                   icon: item.iconData,
-                  size: compact ? 34 : 60),
+                  size: compact ? 52 : 92),
               SizedBox(height: compact ? 3 : 6),
               Text(name,
                   style: TextStyle(

@@ -146,7 +146,7 @@ class _MenuManagementViewState extends State<MenuManagementView> {
                     key: ValueKey(item.id),
                     child: ListTile(
                       leading: ItemThumb(
-                          path: item.imagePath, icon: item.iconData, size: 44),
+                          path: item.imagePath, icon: item.iconData, size: 64),
                       title: Text(
                         _ur ? item.nameUr : item.nameEn,
                         maxLines: 1,
@@ -593,7 +593,7 @@ class _InventoryViewState extends State<InventoryView> {
                       leading: ItemThumb(
                           path: item.imagePath,
                           icon: Icons.inventory_2,
-                          size: 44,
+                          size: 64,
                           color: low ? Colors.red.shade700 : Colors.green.shade700),
                       title: Text(item.name,
                           style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -1377,20 +1377,20 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Future<void> _pickQr(int slot) async {
-    final res = await FilePicker.platform.pickFiles(type: FileType.image);
-    final src = res?.files.single.path;
-    if (src == null) return;
-    final base = await getApplicationSupportDirectory();
-    await base.create(recursive: true);
-    final dest = File(p.join(base.path,
-        'qr_${slot}_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}'));
-    await File(src).copy(dest.path);
+    String? dest;
+    try {
+      dest = await pickAndStoreImage(maxSide: 1200, quality: 95, prefix: 'qr_$slot');
+    } catch (e) {
+      if (mounted) toast(context, 'Could not add the picture: $e', error: true);
+      return;
+    }
+    if (dest == null) return;
     if (!mounted) return;
     setState(() {
       if (slot == 1) {
-        _img1 = dest.path;
+        _img1 = dest!;
       } else {
-        _img2 = dest.path;
+        _img2 = dest!;
       }
     });
   }
@@ -1404,7 +1404,7 @@ class _SettingsViewState extends State<SettingsView> {
         children: [
           has
               ? Image.file(File(path), width: 56, height: 56)
-              : const Icon(Icons.qr_code_2, size: 44),
+              : const Icon(Icons.qr_code_2, size: 64),
           const SizedBox(width: 8),
           Expanded(
             child: Wrap(

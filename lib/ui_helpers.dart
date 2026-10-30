@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
 
 import 'package:path/path.dart' as p;
@@ -177,15 +177,26 @@ class ItemThumb extends StatelessWidget {
   }
 }
 
-Future<String?> pickAndStoreImage() async {
-  final res = await FilePicker.platform.pickFiles(type: FileType.image);
-  final src = res?.files.single.path;
-  if (src == null) return null;
+/// Opens the gallery, shrinks the picture (so big phone photos cannot crash
+/// the app) and stores a copy inside the app. Returns the saved path.
+Future<String?> pickAndStoreImage({
+  double maxSide = 700,
+  int quality = 80,
+  String prefix = 'img',
+}) async {
+  final x = await ImagePicker().pickImage(
+    source: ImageSource.gallery,
+    maxWidth: maxSide,
+    maxHeight: maxSide,
+    imageQuality: quality,
+  );
+  if (x == null) return null;
   final base = await getApplicationSupportDirectory();
   await base.create(recursive: true);
-  final dest = File(p.join(base.path,
-      'img_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}'));
-  await File(src).copy(dest.path);
+  final ext = p.extension(x.path).isEmpty ? '.jpg' : p.extension(x.path);
+  final dest = File(p.join(
+      base.path, '${prefix}_${DateTime.now().millisecondsSinceEpoch}$ext'));
+  await File(x.path).copy(dest.path);
   return dest.path;
 }
 
@@ -205,7 +216,7 @@ class ImagePickRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        ItemThumb(path: path, icon: icon, size: 48),
+        ItemThumb(path: path, icon: icon, size: 96),
         const SizedBox(width: 8),
         Expanded(
           child: Wrap(
@@ -213,8 +224,14 @@ class ImagePickRow extends StatelessWidget {
             children: [
               OutlinedButton.icon(
                 onPressed: () async {
-                  final v = await pickAndStoreImage();
-                  if (v != null) onChanged(v);
+                  try {
+                    final v = await pickAndStoreImage();
+                    if (v != null) onChanged(v);
+                  } catch (e) {
+                    if (context.mounted) {
+                      toast(context, 'Could not add the picture: $e', error: true);
+                    }
+                  }
                 },
                 icon: const Icon(Icons.photo, size: 18),
                 label: Text(path.isEmpty ? 'Add picture' : 'Change picture'),
